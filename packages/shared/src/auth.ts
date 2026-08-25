@@ -12,8 +12,8 @@ export const PASSWORD_MAX_LENGTH = 64
 
 export const passwordSchema = z
   .string()
-  .min(PASSWORD_MIN_LENGTH, { error: 'password.too_short' })
-  .max(PASSWORD_MAX_LENGTH, { error: 'password.too_long' })
+  .min(PASSWORD_MIN_LENGTH, { error: "password.too_short" })
+  .max(PASSWORD_MAX_LENGTH, { error: "password.too_long" })
 
 /**
  * Unicode-aware personal name. \p{L} = any letter in any script,
@@ -25,9 +25,9 @@ const NAME_RE = /^\p{L}[\p{L}\p{M}\p{Zs}'‘’ʻʼ‛-]*$/u
 export const nameSchema = z
   .string()
   .trim()
-  .min(1, { error: 'field.required' })
-  .max(50, { error: 'name.invalid' })
-  .regex(NAME_RE, { error: 'name.invalid' })
+  .min(1, { error: "field.required" })
+  .max(50, { error: "name.invalid" })
+  .regex(NAME_RE, { error: "name.invalid" })
 
 const phoneField = createRegionalPhoneSchema(DEFAULT_REGION)
 

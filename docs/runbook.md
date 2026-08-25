@@ -23,7 +23,7 @@
 | `packages/shared/error.ts` (15 API codes + field codes + status map) | ✅ |
 | `packages/shared/auth.ts` (register/login, publicUser, authResponse) | ✅ |
 | `packages/shared/index.ts` (barrel: re-exports all four modules) | ✅ T-1.2 done |
-| `yarn verify` + CI | 🔧 built (`typecheck → test → build`); `lint` stage pending T-1.4 |
+| `yarn verify` + CI | ✅ `lint → typecheck → test → build`, CI runs the same command |
 | Backend | ❌ |
 
 ---
@@ -49,7 +49,8 @@ The order is deliberate: cheapest check first. If lint fails in 2 seconds there 
 ```json
 {
   "scripts": {
-    "lint": "eslint .",
+    "lint": "biome check .",
+    "format": "biome check . --write",
     "typecheck": "yarn workspaces foreach --all --topological run typecheck",
     "test": "yarn workspaces foreach --all run test",
     "build": "yarn workspaces foreach --all --topological run build",
@@ -57,8 +58,6 @@ The order is deliberate: cheapest check first. If lint fails in 2 seconds there 
   }
 }
 ```
-
-> **Current state:** the `lint` stage is not wired yet — `verify` is `typecheck && test && build`. See T-1.4: type-aware `typescript-eslint` cannot run on TypeScript 7 (the native port ships no JS compiler API), so the linter choice is an open decision.
 
 `--topological` guarantees `packages/shared` builds **before** `apps/*`. Without it `apps/api` tries to import a `dist/` that does not exist yet.
 
@@ -123,7 +122,7 @@ Every task carries: **ID · what · files · acceptance criteria**. Each day end
 | T-1.1 | `phone.ts` three fixes: (a) registry keys `uz`/`us` → `UZ`/`US` (FR-1.1); (b) `normalizePhone` guard `if (/\d+/…)` → `if (!/^\d+$/…)` — the unanchored regex short-circuits every input, so the function currently never normalizes and the branches below it are dead code; (c) US `example` `'+1234567890'` → 12 chars (`callingCode:'1'` + `nationalNumberLength:10`) | `packages/shared/src/phone.ts` | `normalizePhone('90 123 45 67') === '+998901234567'` **and** `normalizePhone('998901234567') === '+998901234567'`; `createRegionalPhoneSchema('UZ')` accepts `+998901234567`, rejects `998901234567` |
 | T-1.2 | `index.ts` re-exports all four modules | `packages/shared/src/index.ts` | `yarn workspace @wallet/shared build` clean |
 | T-1.3 | Install Vitest, add `test` script to `packages/shared` | root, `packages/shared/package.json` | `yarn test` runs (even with 0 tests) |
-| T-1.4 | **BLOCKED — linter choice open.** `typescript-eslint@8.68.0` declares `typescript: ">=4.8.4 <6.1.0"`; the project is on `7.0.2`, whose `lib/` ships only `getExePath.js`/`tsc.js`/`version.cjs` — there is no `typescript.js` compiler API for the parser to build an AST from. Candidates: Biome (lint + format, one dep), oxlint + Prettier, or pin TS 5.9 | `eslint.config.js` / `biome.json`, root | `yarn lint` clean and wired into `verify` |
+| T-1.4 | Biome (lint + format) instead of ESLint + Prettier. `typescript-eslint` cannot run here: it needs `typescript` `>=4.8.4 <6.1.0`, and TS 7.0.2 (native port) ships no `typescript.js` compiler API for its parser. Biome parses TypeScript itself, so it is unaffected — and replaces two toolchains with one dependency | `biome.json`, root | `yarn lint` clean, wired as the first stage of `verify` |
 | T-1.5 | Root `verify` script | `package.json` | `yarn verify` fully green |
 | T-1.6 | CI workflow | `.github/workflows/ci.yml` | CI green on the PR |
 | T-1.7 | Protect `main` (GitHub settings) | — | Merge blocked without CI |

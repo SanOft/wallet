@@ -12,17 +12,36 @@ import * as z from "zod"
  */
 
 export const apiErrorCodeSchema = z.enum([
-  'VALIDATION_ERROR', 'REGISTRATION_FAILED', 'AUTH_INVALID_CREDENTIALS',
-  'AUTH_TOKEN_EXPIRED', 'AUTH_REFRESH_REUSED', 'AUTH_LOCKED', 'RATE_LIMITED',
-  'RECIPIENT_NOT_FOUND', 'SELF_TRANSFER_FORBIDDEN', 'INSUFFICIENT_FUNDS',
-  'LIMIT_EXCEEDED', 'IDEMPOTENCY_CONFLICT', 'PIN_NOT_SET', 'PIN_LOCKED', 'INTERNAL',
+  "VALIDATION_ERROR",
+  "REGISTRATION_FAILED",
+  "AUTH_INVALID_CREDENTIALS",
+  "AUTH_TOKEN_EXPIRED",
+  "AUTH_REFRESH_REUSED",
+  "AUTH_LOCKED",
+  "RATE_LIMITED",
+  "RECIPIENT_NOT_FOUND",
+  "SELF_TRANSFER_FORBIDDEN",
+  "INSUFFICIENT_FUNDS",
+  "LIMIT_EXCEEDED",
+  "IDEMPOTENCY_CONFLICT",
+  "PIN_NOT_SET",
+  "PIN_LOCKED",
+  "INTERNAL",
 ])
 export type ApiErrorCode = z.infer<typeof apiErrorCodeSchema>
 
 export const fieldErrorCodeSchema = z.enum([
-  'phone.invalid_format', 'phone.unsupported_region', 'phone.invalid_length',
-  'money.invalid_format', 'money.below_minimum', 'money.above_maximum', 'money.invalid_step',
-  'password.too_short', 'password.too_long', 'name.invalid', 'field.required',
+  "phone.invalid_format",
+  "phone.unsupported_region",
+  "phone.invalid_length",
+  "money.invalid_format",
+  "money.below_minimum",
+  "money.above_maximum",
+  "money.invalid_step",
+  "password.too_short",
+  "password.too_long",
+  "name.invalid",
+  "field.required",
 ])
 export type FieldErrorCode = z.infer<typeof fieldErrorCodeSchema>
 
@@ -49,13 +68,20 @@ export type ApiError = z.infer<typeof apiErrorSchema>
 
 /** Transport mapping. Kept next to the codes so the two cannot drift apart. */
 export const API_ERROR_STATUS = {
-  VALIDATION_ERROR: 400,        REGISTRATION_FAILED: 400,
-  AUTH_INVALID_CREDENTIALS: 401, AUTH_TOKEN_EXPIRED: 401,
-  AUTH_REFRESH_REUSED: 401,      AUTH_LOCKED: 429,
-  RATE_LIMITED: 429,             RECIPIENT_NOT_FOUND: 404,
-  SELF_TRANSFER_FORBIDDEN: 422,  INSUFFICIENT_FUNDS: 422,
-  LIMIT_EXCEEDED: 422,           IDEMPOTENCY_CONFLICT: 409,
-  PIN_NOT_SET: 422,              PIN_LOCKED: 429,
+  VALIDATION_ERROR: 400,
+  REGISTRATION_FAILED: 400,
+  AUTH_INVALID_CREDENTIALS: 401,
+  AUTH_TOKEN_EXPIRED: 401,
+  AUTH_REFRESH_REUSED: 401,
+  AUTH_LOCKED: 429,
+  RATE_LIMITED: 429,
+  RECIPIENT_NOT_FOUND: 404,
+  SELF_TRANSFER_FORBIDDEN: 422,
+  INSUFFICIENT_FUNDS: 422,
+  LIMIT_EXCEEDED: 422,
+  IDEMPOTENCY_CONFLICT: 409,
+  PIN_NOT_SET: 422,
+  PIN_LOCKED: 429,
   INTERNAL: 500,
 } as const satisfies Record<ApiErrorCode, number>
 

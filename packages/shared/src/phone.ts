@@ -8,8 +8,18 @@ interface RegionMeta {
 }
 
 export const REGIONS = {
-  UZ: { callingCode: '998', nationalNumberLength: 9, displayGroups: [2, 3, 2, 2], example: '+998901234567' },
-  US: { callingCode: '1', nationalNumberLength: 10, displayGroups: [3, 3, 4], example: '+12025550123' },
+  UZ: {
+    callingCode: "998",
+    nationalNumberLength: 9,
+    displayGroups: [2, 3, 2, 2],
+    example: "+998901234567",
+  },
+  US: {
+    callingCode: "1",
+    nationalNumberLength: 10,
+    displayGroups: [3, 3, 4],
+    example: "+12025550123",
+  },
 } as const satisfies Record<string, RegionMeta>
 
 export type RegionCode = keyof typeof REGIONS
@@ -17,11 +27,11 @@ export type RegionCode = keyof typeof REGIONS
 export const SUPPORTED_REGIONS = ["UZ"] as const satisfies readonly RegionCode[]
 export type SupportedRegion = (typeof SUPPORTED_REGIONS)[number]
 
-export const DEFAULT_REGION: SupportedRegion = 'UZ'
+export const DEFAULT_REGION: SupportedRegion = "UZ"
 
 export const E164_REGEX = /^\+[1-9]\d{1,14}$/
 
-export const phoneSchema = z.string().regex(E164_REGEX, { error: 'phone.invalid_format' });
+export const phoneSchema = z.string().regex(E164_REGEX, { error: "phone.invalid_format" })
 
 export type Phone = z.infer<typeof phoneSchema>
 
@@ -29,25 +39,28 @@ export function createRegionalPhoneSchema(region: SupportedRegion) {
   const { callingCode, nationalNumberLength } = REGIONS[region]
   const expected = 1 + callingCode.length + nationalNumberLength
   return phoneSchema
-  .refine((value)=> value.startsWith(`+${callingCode}`), {error:'phone.unsupported_region'})
-  .refine((val)=> val.length ===expected, {error:'phone.invalid_length'})
+    .refine((value) => value.startsWith(`+${callingCode}`), { error: "phone.unsupported_region" })
+    .refine((val) => val.length === expected, { error: "phone.invalid_length" })
 }
 
-const stripSeparators = (raw: string): string => raw.replace(/[\s(\-.)]/g, '')
+const stripSeparators = (raw: string): string => raw.replace(/[\s(\-.)]/g, "")
 
-export function normalizePhone(raw: string, region: SupportedRegion = DEFAULT_REGION):string {
-  const {callingCode, nationalNumberLength}= REGIONS[region]
+export function normalizePhone(raw: string, region: SupportedRegion = DEFAULT_REGION): string {
+  const { callingCode, nationalNumberLength } = REGIONS[region]
   const cleaned = stripSeparators(raw)
-  if(E164_REGEX.test(cleaned)) return cleaned
+  if (E164_REGEX.test(cleaned)) return cleaned
 
-  const digits = cleaned.replace(/^\+/, '')
-  if(!/^\d+$/.test(digits)) return raw
+  const digits = cleaned.replace(/^\+/, "")
+  if (!/^\d+$/.test(digits)) return raw
 
-  if(digits.length === callingCode.length + nationalNumberLength && digits.startsWith(callingCode)){
+  if (
+    digits.length === callingCode.length + nationalNumberLength &&
+    digits.startsWith(callingCode)
+  ) {
     return `+${digits}`
   }
-  
-  if(digits.length === nationalNumberLength){
+
+  if (digits.length === nationalNumberLength) {
     return `+${callingCode}${digits}`
   }
   return raw
@@ -66,5 +79,5 @@ export function formatPhone(e164: string, region: SupportedRegion = DEFAULT_REGI
     i += size
   }
   if (i < national.length) parts.push(national.slice(i))
-  return `+${callingCode} ${parts.join(' ')}`
+  return `+${callingCode} ${parts.join(" ")}`
 }

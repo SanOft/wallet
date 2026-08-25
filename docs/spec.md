@@ -243,7 +243,7 @@ Every requirement is numbered and verifiable. Acceptance criteria are written in
 
 ## NFR-6. Code quality
 
-- TS `strict: true`; `any` banned via ESLint.
+- TS `strict: true`; `any` banned via Biome (`suspicious/noExplicitAny`).
 - Coverage: domain (transfer/ledger) ≥ 90%, overall ≥ 70%.
 - Code that fails CI does not reach `main`.
 
@@ -297,7 +297,7 @@ flowchart TB
     SHARED -.->|"import"| APISRV
 ```
 
-**Key rule:** `packages/shared` imports nothing; `apps/*` import only `packages/*`; `apps/*` **never** import each other. The dependency direction is one-way — enforced with ESLint.
+**Key rule:** `packages/shared` imports nothing; `apps/*` import only `packages/*`; `apps/*` **never** import each other. The dependency direction is one-way — enforced with Biome `noRestrictedImports`, wired when the app workspaces land (B0/F0); today `apps/*` are empty stubs with nothing to constrain.
 
 ### 8.3 Backend internal layers (C3) — Ports & Adapters
 

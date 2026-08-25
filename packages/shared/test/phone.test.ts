@@ -27,10 +27,7 @@ describe("REGIONS registry", () => {
 
   it("every example agrees with its own callingCode and nationalNumberLength", () => {
     for (const [key, meta] of Object.entries(REGIONS)) {
-      expect(
-        meta.example.startsWith(`+${meta.callingCode}`),
-        `${key}.example prefix`,
-      ).toBe(true)
+      expect(meta.example.startsWith(`+${meta.callingCode}`), `${key}.example prefix`).toBe(true)
       expect(meta.example.length, `${key}.example length`).toBe(
         1 + meta.callingCode.length + meta.nationalNumberLength,
       )
