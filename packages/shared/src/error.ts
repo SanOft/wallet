@@ -4,8 +4,9 @@ import * as z from "zod"
  * Two distinct kinds of error identity:
  *
  *  1. API error codes  — the whole request failed. One per response.
- *  2. Field error codes — a specific field is wrong. Many per response,
- *                         always nested inside VALIDATION_ERROR.
+ *  2. Field error codes — a specific field is wrong, or a named limit was
+ *                         hit. Many per response, nested inside
+ *                         VALIDATION_ERROR or LIMIT_EXCEEDED.
  *
  * Both are stable, language-independent identifiers. Human text is produced
  * by the client from these codes, never taken from the wire.
@@ -19,6 +20,9 @@ export const apiErrorCodeSchema = z.enum([
   "AUTH_REFRESH_REUSED",
   "AUTH_LOCKED",
   "RATE_LIMITED",
+  "NOT_FOUND",
+  "MALFORMED_BODY",
+  "PAYLOAD_TOO_LARGE",
   "RECIPIENT_NOT_FOUND",
   "SELF_TRANSFER_FORBIDDEN",
   "INSUFFICIENT_FUNDS",
@@ -42,6 +46,10 @@ export const fieldErrorCodeSchema = z.enum([
   "password.too_long",
   "name.invalid",
   "field.required",
+  "limit.per_operation",
+  "limit.daily",
+  "limit.new_recipient",
+  "limit.velocity",
 ])
 export type FieldErrorCode = z.infer<typeof fieldErrorCodeSchema>
 
@@ -60,7 +68,10 @@ export const apiErrorSchema = z.object({
     message: z.string(),
     /** Correlates the response with server logs (NFR-5.1). */
     requestId: z.string(),
-    /** Present only when code === 'VALIDATION_ERROR'. */
+    /**
+     * Present for VALIDATION_ERROR (which field failed) and for LIMIT_EXCEEDED
+     * (which limit was hit, via the `limit.*` codes). Absent otherwise.
+     */
     details: z.array(fieldIssueSchema).optional(),
   }),
 })
@@ -75,6 +86,9 @@ export const API_ERROR_STATUS = {
   AUTH_REFRESH_REUSED: 401,
   AUTH_LOCKED: 429,
   RATE_LIMITED: 429,
+  NOT_FOUND: 404,
+  MALFORMED_BODY: 400,
+  PAYLOAD_TOO_LARGE: 413,
   RECIPIENT_NOT_FOUND: 404,
   SELF_TRANSFER_FORBIDDEN: 422,
   INSUFFICIENT_FUNDS: 422,

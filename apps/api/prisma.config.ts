@@ -22,6 +22,6 @@ export default defineConfig({
   },
   migrations: {
     path: "prisma/migrations",
-    seed: "tsx prisma/seed.ts",
+    seed: "tsx --env-file-if-exists=.env prisma/seed.ts",
   },
 })

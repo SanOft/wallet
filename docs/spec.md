@@ -297,7 +297,7 @@ flowchart TB
     SHARED -.->|"import"| APISRV
 ```
 
-**Key rule:** `packages/shared` imports nothing; `apps/*` import only `packages/*`; `apps/*` **never** import each other. The dependency direction is one-way — enforced with Biome `noRestrictedImports`, wired when the app workspaces land (B0/F0); today `apps/*` are empty stubs with nothing to constrain.
+**Key rule:** `packages/shared` imports nothing; `apps/*` import only `packages/*`; `apps/*` **never** import each other. The dependency direction is one-way. It is currently held by review rather than by a rule: `biome.json` has no `noRestrictedImports` entry yet, so the guard named here is a plan, not a control. Wiring it is tracked in `docs/PARKING.md`.
 
 ### 8.3 Backend internal layers (C3) — Ports & Adapters
 
@@ -747,7 +747,7 @@ The two kinds of error identity never get mixed up:
 | **API error code**   | The whole request failed; exactly one per response | `INSUFFICIENT_FUNDS`   | `error.code`           |
 | **Field error code** | One field is wrong; there may be several           | `phone.invalid_format` | `error.details[].code` |
 
-Field codes appear only inside `VALIDATION_ERROR`. HTTP status codes live in an `API_ERROR_STATUS` map kept **next to** the code list — enforced at the type level so the two cannot drift apart.
+Field codes appear inside `VALIDATION_ERROR` (which field failed) and inside `LIMIT_EXCEEDED` (which limit was hit, via the `limit.*` family). The three framework codes above exist because a request that never reaches a handler — a wrong path, an unparseable body, an oversized body — must still return this envelope: a client is told to parse every failure with it, and Express would otherwise answer with an HTML page or, worse, a retryable `INTERNAL`. HTTP status codes live in an `API_ERROR_STATUS` map kept **next to** the code list — enforced at the type level so the two cannot drift apart.
 
 | Code                       | HTTP | When                                         | User-facing message                                                                                            |
 | -------------------------- | ---- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -758,10 +758,13 @@ Field codes appear only inside `VALIDATION_ERROR`. HTTP status codes live in an 
 | `AUTH_REFRESH_REUSED`      | 401  | Reuse detection fired                        | "Please sign in again for security reasons."                                                                   |
 | `AUTH_LOCKED`              | 429  | Lockout active (`Retry-After` header)        | "Too many attempts. Try again in X minutes."                                                                   |
 | `RATE_LIMITED`             | 429  | General rate limit / lookup limit            | "Too many requests. Please wait a moment."                                                                     |
+| `NOT_FOUND`                | 404  | No route matches the path, or the method is not allowed on it | "This page is no longer available."                                           |
+| `MALFORMED_BODY`           | 400  | The request body is not parseable JSON       | (technical error — with a support ID)                                                                          |
+| `PAYLOAD_TOO_LARGE`        | 413  | The request body exceeds the size limit      | (technical error — with a support ID)                                                                          |
 | `RECIPIENT_NOT_FOUND`      | 404  | Lookup: number not in the system             | "This number is not registered with Wallet."                                                                   |
 | `SELF_TRANSFER_FORBIDDEN`  | 422  | Sending to oneself                           | "You cannot send money to yourself."                                                                           |
 | `INSUFFICIENT_FUNDS`       | 422  | Balance too low                              | "Insufficient funds."                                                                                          |
-| `LIMIT_EXCEEDED`           | 422  | FR-6 limits (which limit — in `details`)     | "Limit exceeded: ..."                                                                                          |
+| `LIMIT_EXCEEDED`           | 422  | FR-6 limits (which limit — in `details`, via the `limit.*` field codes) | "Limit exceeded: ..."                                                                                          |
 | `IDEMPOTENCY_CONFLICT`     | 409  | Same key + different payload                 | (technical error — with a support ID)                                                                          |
 | `PIN_NOT_SET`              | 422  | USSD transfer without a PIN                  | "Set your PIN in the app first."                                                                               |
 | `PIN_LOCKED`               | 429  | 3 wrong PIN attempts                         | "PIN is blocked. Try again in 1 hour."                                                                         |

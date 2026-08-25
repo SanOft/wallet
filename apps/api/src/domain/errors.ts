@@ -3,10 +3,18 @@ import type { ApiErrorCode, FieldIssue } from "@wallet/shared"
 /**
  * The domain's error vocabulary (spec §8.3).
  *
- * A domain error carries a stable `ApiErrorCode` and nothing else about
- * transport: no HTTP status, no `CON`/`END` prefix, no header. Turning one into
- * a 422 or into `END Insufficient funds` is the adapter's job, which is what
- * lets the USSD channel plug in later without touching this layer.
+ * A domain error carries a stable `ApiErrorCode`, no HTTP status, no
+ * `CON`/`END` prefix and no header. Turning one into a 422 or into
+ * `END Insufficient funds` is the adapter's job.
+ *
+ * Stated honestly, because the isolation is partial: the domain reuses the API
+ * code enum as its vocabulary rather than owning one of its own, and
+ * `ApiErrorCode` lives next to the HTTP status map in the same shared file. So
+ * the status is effectively decided in `packages/shared` and merely read by the
+ * adapter. That is a deliberate one-adapter simplification and it is cheap to
+ * undo today — six classes and one import. Revisit it at B6, when the USSD
+ * adapter may want a granularity the HTTP shape does not share; the seam to
+ * disagree at does not exist yet.
  *
  * Nothing in this file may import from `express`, and nothing in `adapters/`
  * may construct business rules. That direction is the whole point of §8.3.

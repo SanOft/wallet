@@ -18,13 +18,16 @@
 |---|---|
 | Monorepo scaffold (Yarn 4 workspaces, `nodeLinker: node-modules`) | ✅ |
 | `tsconfig.base.json` (strict + 8 extra flags) | ✅ |
-| `packages/shared/phone.ts` (E.164, region registry, normalize, format) | 🔧 3 fixes pending |
+| `packages/shared/phone.ts` (E.164, region registry, normalize, format) | ✅ T-1.1 done, 17 tests |
 | `packages/shared/money.ts` (ISO 4217, minor units, limits, format) | ✅ |
 | `packages/shared/error.ts` (15 API codes + field codes + status map) | ✅ |
 | `packages/shared/auth.ts` (register/login, publicUser, authResponse) | ✅ |
 | `packages/shared/index.ts` (barrel: re-exports all four modules) | ✅ T-1.2 done |
-| `yarn verify` + CI | ✅ `lint → typecheck → test → build`, CI runs the same command |
-| Backend | ❌ |
+| `yarn verify` + CI | ✅ `lint → build → typecheck → test`, CI runs the same command |
+| Backend skeleton (`apps/api`: layers, requestId + pino, error envelope, `/health`) | ✅ day 2 |
+| Data model (7 tables, CHECK constraints, I-3 trigger) | ✅ day 2, verified on Postgres 17 |
+| Neon project + hosted `DATABASE_URL` (T-2.6) | ❌ outstanding — local Docker Postgres used for verification |
+| Auth, ledger, transfers | ❌ days 3–4 |
 
 ---
 
@@ -39,10 +42,10 @@ yarn verify
 It runs, in this order:
 
 ```
-lint  →  typecheck  →  test  →  build
+lint  →  build  →  typecheck  →  test
 ```
 
-The order is deliberate: cheapest check first. If lint fails in 2 seconds there is no reason to wait 40 seconds for a build.
+Lint runs first because it is the cheapest. Build comes next, not last: `apps/*` typecheck against the **emitted** types of `packages/*`, so on a fresh clone there is nothing to typecheck against until the build has run. Ordering it last made `verify` pass locally and fail on any machine without a `dist/`.
 
 ### Root `package.json` scripts
 
@@ -54,7 +57,7 @@ The order is deliberate: cheapest check first. If lint fails in 2 seconds there 
     "typecheck": "yarn workspaces foreach --all --topological run typecheck",
     "test": "yarn workspaces foreach --all run test",
     "build": "yarn workspaces foreach --all --topological run build",
-    "verify": "yarn lint && yarn typecheck && yarn test && yarn build"
+    "verify": "yarn lint && yarn build && yarn typecheck && yarn test"
   }
 }
 ```

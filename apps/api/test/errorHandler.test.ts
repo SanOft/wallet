@@ -41,15 +41,47 @@ function appThatThrows(thrown: unknown, log: Logger) {
 }
 
 describe("error envelope (spec §12.3)", () => {
-  it("every API error code returns its documented HTTP status", async () => {
-    const codes = apiErrorCodeSchema.options as readonly ApiErrorCode[]
-    expect(codes).toHaveLength(15)
+  /**
+   * Transcribed by hand from spec §12.3. Asserting against API_ERROR_STATUS
+   * instead would only prove the handler dereferences the same map it reads —
+   * a typo in the map would keep such a test green while breaking the contract.
+   */
+  const SPEC_12_3: ReadonlyArray<readonly [ApiErrorCode, number]> = [
+    ["VALIDATION_ERROR", 400],
+    ["REGISTRATION_FAILED", 400],
+    ["AUTH_INVALID_CREDENTIALS", 401],
+    ["AUTH_TOKEN_EXPIRED", 401],
+    ["AUTH_REFRESH_REUSED", 401],
+    ["AUTH_LOCKED", 429],
+    ["RATE_LIMITED", 429],
+    ["NOT_FOUND", 404],
+    ["MALFORMED_BODY", 400],
+    ["PAYLOAD_TOO_LARGE", 413],
+    ["RECIPIENT_NOT_FOUND", 404],
+    ["SELF_TRANSFER_FORBIDDEN", 422],
+    ["INSUFFICIENT_FUNDS", 422],
+    ["LIMIT_EXCEEDED", 422],
+    ["IDEMPOTENCY_CONFLICT", 409],
+    ["PIN_NOT_SET", 422],
+    ["PIN_LOCKED", 429],
+    ["INTERNAL", 500],
+  ]
 
-    for (const code of codes) {
+  it("the status map matches the catalog transcribed from the spec", () => {
+    // Guards the map itself, independently of any handler.
+    for (const [code, status] of SPEC_12_3) {
+      expect(API_ERROR_STATUS[code], code).toBe(status)
+    }
+    // And guards against a code existing that the transcription forgot.
+    expect(new Set(apiErrorCodeSchema.options)).toEqual(new Set(SPEC_12_3.map(([c]) => c)))
+  })
+
+  it("every API error code returns its documented HTTP status", async () => {
+    for (const [code, status] of SPEC_12_3) {
       const { log } = stubLogger()
       const res = await request(appThatThrows(new DomainError(code, "boom"), log)).get("/boom")
 
-      expect(res.status, `${code} status`).toBe(API_ERROR_STATUS[code])
+      expect(res.status, `${code} status`).toBe(status)
       expect(res.body.error.code, `${code} body code`).toBe(code)
     }
   })
@@ -120,14 +152,27 @@ describe("validation errors", () => {
 
     const res = await request(appThatThrows(parsed.error, log)).get("/boom")
 
-    expect(res.body.error.details).toEqual([])
+    // The reason could not be mapped, but the client is still told which field
+    // failed — an empty details array would leave it nothing to render.
+    expect(res.body.error.details).toEqual([{ path: ["nickname"], code: "field.required" }])
     expect(calls.some((c) => c.level === "warn")).toBe(true)
   })
 
-  it("omits details entirely for codes other than VALIDATION_ERROR", async () => {
+  it("keeps details on LIMIT_EXCEEDED, which §12.3 says names which limit", async () => {
     const { log } = stubLogger()
     const err = new DomainError("LIMIT_EXCEEDED", "over", [
-      { path: ["amount"], code: "money.above_maximum" },
+      { path: ["amount"], code: "limit.daily" },
+    ])
+    const res = await request(appThatThrows(err, log)).get("/boom")
+
+    expect(res.status).toBe(422)
+    expect(res.body.error.details).toEqual([{ path: ["amount"], code: "limit.daily" }])
+  })
+
+  it("omits details on a code the catalog gives none", async () => {
+    const { log } = stubLogger()
+    const err = new DomainError("INSUFFICIENT_FUNDS", "no funds", [
+      { path: ["amount"], code: "money.below_minimum" },
     ])
     const res = await request(appThatThrows(err, log)).get("/boom")
 

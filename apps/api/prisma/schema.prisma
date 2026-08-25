@@ -53,7 +53,7 @@ model User {
   pinHash        String?
   pinLockedUntil DateTime?
   role           UserRole  @default(USER)
-  createdAt      DateTime  @default(now())
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
 
   accounts      Account[]
   refreshTokens RefreshToken[]
@@ -72,7 +72,7 @@ model Account {
   /// of truth (FR-3.2, I-4); reconciliation compares the two daily.
   balance   BigInt      @default(0)
   type      AccountType @default(USER)
-  createdAt DateTime    @default(now())
+  createdAt DateTime    @default(now()) @db.Timestamptz(3)
 
   user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   ledgerEntries   LedgerEntry[]
@@ -98,7 +98,7 @@ model Transfer {
   /// Client-generated UUID v4, mandatory on every money-moving call (FR-4.4).
   idempotencyKey String          @unique
   failReason     String?
-  createdAt      DateTime        @default(now())
+  createdAt      DateTime        @default(now()) @db.Timestamptz(3)
   completedAt    DateTime?
 
   fromAccount   Account       @relation("TransfersSent", fields: [fromAccountId], references: [id])
@@ -123,7 +123,7 @@ model LedgerEntry {
   amount     BigInt
   /// Account balance immediately after this entry, making an audit O(1) (§9.2).
   balanceAfter BigInt
-  createdAt  DateTime @default(now())
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
 
   account  Account  @relation(fields: [accountId], references: [id])
   transfer Transfer @relation(fields: [transferId], references: [id])
@@ -144,7 +144,7 @@ model IdempotencyRecord {
   requestHash String
   response    Json
   statusCode  Int
-  createdAt   DateTime @default(now())
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
   /// Creation + 24h (FR-4.4).
   expiresAt   DateTime
 
@@ -165,7 +165,7 @@ model RefreshToken {
   /// Non-null means this token has already been exchanged — the reuse detector.
   usedAt    DateTime?
   revokedAt DateTime?
-  createdAt DateTime  @default(now())
+  createdAt DateTime  @default(now()) @db.Timestamptz(3)
   expiresAt DateTime
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -181,7 +181,7 @@ model AuthAttempt {
   id        String   @id @default(uuid()) @db.Uuid
   userId    String   @db.Uuid
   succeeded Boolean
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

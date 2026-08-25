@@ -13,6 +13,20 @@ async function main(): Promise<void> {
   const log = createLogger(env)
   const prisma = createPrismaClient(env)
 
+  /**
+   * Without these, a pool error with no listener crashes the process and Node's
+   * default handler prints the raw stack to stderr — outside pino, and so
+   * outside every redaction rule in NFR-5.2.
+   */
+  process.on("uncaughtException", (error: unknown) => {
+    log.fatal({ err: error }, "uncaught exception; exiting")
+    process.exit(1)
+  })
+  process.on("unhandledRejection", (reason: unknown) => {
+    log.fatal({ err: reason }, "unhandled rejection; exiting")
+    process.exit(1)
+  })
+
   const app = createApp({ prisma, log })
   const server = app.listen(env.PORT, () => {
     log.info({ port: env.PORT, env: env.NODE_ENV }, "wallet-api listening")
