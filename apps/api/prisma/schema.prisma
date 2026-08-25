@@ -1,0 +1,190 @@
+// Wallet data model — spec §9.1.
+//
+// Money is BIGINT in minor units everywhere (§9.3, NFR-1.10). There is no
+// Float or Decimal column in this file and there must never be one: a rounding
+// error in a ledger is not a display bug, it is missing money.
+//
+// The invariants that protect the ledger (§9.5) are enforced as database CHECK
+// constraints, added by hand in the migration SQL because Prisma has no schema
+// syntax for them. They are listed on each model below so the two stay in sync.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  USER
+  SYSTEM
+}
+
+enum AccountType {
+  USER
+  TREASURY
+}
+
+enum TransferStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum TransferType {
+  P2P
+  TOPUP
+}
+
+enum TransferChannel {
+  WEB
+  USSD
+}
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  phone          String    @unique
+  firstName      String
+  lastName       String
+  /// Argon2id (NFR-1.1). Never leaves the server; publicUserSchema strips it.
+  passwordHash   String
+  /// Argon2id. Null until the user sets a USSD PIN in the profile (FR-1.6).
+  pinHash        String?
+  pinLockedUntil DateTime?
+  role           UserRole  @default(USER)
+  createdAt      DateTime  @default(now())
+
+  accounts      Account[]
+  refreshTokens RefreshToken[]
+  authAttempts  AuthAttempt[]
+  idempotency   IdempotencyRecord[]
+
+  @@map("users")
+}
+
+/// CHECK: balance >= 0 unless type = TREASURY (I-5, §9.4).
+model Account {
+  id        String      @id @default(uuid()) @db.Uuid
+  userId    String      @db.Uuid
+  currency  String      @default("UZS")
+  /// Cached snapshot in minor units. Derived from the ledger, never the source
+  /// of truth (FR-3.2, I-4); reconciliation compares the two daily.
+  balance   BigInt      @default(0)
+  type      AccountType @default(USER)
+  createdAt DateTime    @default(now())
+
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntries   LedgerEntry[]
+  transfersSent   Transfer[]    @relation("TransfersSent")
+  transfersGot    Transfer[]    @relation("TransfersReceived")
+
+  @@unique([userId, currency])
+  @@index([userId])
+  @@map("accounts")
+}
+
+/// CHECK: amount > 0 (FR-4.7).
+/// CHECK: completedAt is set only when status = COMPLETED.
+model Transfer {
+  id             String          @id @default(uuid()) @db.Uuid
+  fromAccountId  String          @db.Uuid
+  toAccountId    String          @db.Uuid
+  /// Minor units, strictly positive. Direction lives in the ledger pair.
+  amount         BigInt
+  status         TransferStatus  @default(PENDING)
+  type           TransferType    @default(P2P)
+  channel        TransferChannel @default(WEB)
+  /// Client-generated UUID v4, mandatory on every money-moving call (FR-4.4).
+  idempotencyKey String          @unique
+  failReason     String?
+  createdAt      DateTime        @default(now())
+  completedAt    DateTime?
+
+  fromAccount   Account       @relation("TransfersSent", fields: [fromAccountId], references: [id])
+  toAccount     Account       @relation("TransfersReceived", fields: [toAccountId], references: [id])
+  ledgerEntries LedgerEntry[]
+
+  @@index([fromAccountId, createdAt])
+  @@index([toAccountId, createdAt])
+  @@map("transfers")
+}
+
+/// The journal. Append-only by construction (I-3): the repository exposes no
+/// update or delete, and a database rule rejects both.
+///
+/// CHECK: amount <> 0 — a zero entry carries no information and would let a
+/// transfer satisfy "two rows summing to zero" while moving nothing.
+model LedgerEntry {
+  id         String   @id @default(uuid()) @db.Uuid
+  accountId  String   @db.Uuid
+  transferId String   @db.Uuid
+  /// Signed minor units: negative debits the account, positive credits it.
+  amount     BigInt
+  /// Account balance immediately after this entry, making an audit O(1) (§9.2).
+  balanceAfter BigInt
+  createdAt  DateTime @default(now())
+
+  account  Account  @relation(fields: [accountId], references: [id])
+  transfer Transfer @relation(fields: [transferId], references: [id])
+
+  @@index([accountId, createdAt])
+  @@index([transferId])
+  @@map("ledger_entries")
+}
+
+/// CHECK: statusCode between 100 and 599.
+model IdempotencyRecord {
+  /// The client-generated key is the primary key; there is nothing else to
+  /// identify a replay by.
+  key         String   @id
+  userId      String   @db.Uuid
+  /// SHA-256 of the payload. Distinguishes a replay from a key collision with a
+  /// different body, which is a 409 rather than a stored response (FR-4.4).
+  requestHash String
+  response    Json
+  statusCode  Int
+  createdAt   DateTime @default(now())
+  /// Creation + 24h (FR-4.4).
+  expiresAt   DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("idempotency_records")
+}
+
+/// One chain per device. On reuse the whole family is revoked (FR-2.7).
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  familyId  String    @db.Uuid
+  /// SHA-256 of the opaque token. The raw value is never stored, so a database
+  /// leak cannot hijack a session (§9.2).
+  tokenHash String    @unique
+  /// Non-null means this token has already been exchanged — the reuse detector.
+  usedAt    DateTime?
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+/// Lockout counting lives here rather than in a column on User, so the history
+/// survives for audit (§9.2, FR-2.3).
+model AuthAttempt {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  succeeded Boolean
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("auth_attempts")
+}
