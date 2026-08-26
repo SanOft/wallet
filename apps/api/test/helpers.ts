@@ -3,6 +3,7 @@ import type { Express } from "express"
 import { createApp } from "../src/adapters/http/app.js"
 import { type Env, loadEnv } from "../src/config/env.js"
 import { AuthService } from "../src/domain/AuthService.js"
+import { TransferService } from "../src/domain/TransferService.js"
 import { createTokenService } from "../src/infra/jwt.js"
 import { createLogger } from "../src/infra/logger.js"
 
@@ -39,9 +40,10 @@ export function buildApp(prisma: PrismaClient, envOverrides: NodeJS.ProcessEnv =
   })
   const tokens = createTokenService(env)
   const auth = new AuthService({ prisma, tokens })
+  const transfers = new TransferService({ prisma })
 
   return {
-    app: createApp({ prisma, log, env, auth, tokens }),
+    app: createApp({ prisma, log, env, auth, tokens, transfers }),
     logText: () => lines.join(""),
   }
 }

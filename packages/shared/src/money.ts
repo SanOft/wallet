@@ -54,6 +54,33 @@ export const TRANSFER_LIMITS = {
 
 export type SupportedCurrency = keyof typeof TRANSFER_LIMITS
 
+/**
+ * Anti-fraud limits (FR-6.1, FR-6.2, FR-6.3), in minor units.
+ *
+ * §12 of the spec says these are "configurable parameters, stored in the DB".
+ * They live here for the MVP because both sides need them: the transfer wizard
+ * shows the remaining daily allowance before the user commits to an amount
+ * (13.5), and a client that had to guess would either block valid transfers or
+ * promise ones the server will refuse. Moving them to a table is a v2 change
+ * that replaces this constant with a loader, not a redesign.
+ */
+export const CHANNEL_LIMITS = {
+  WEB: { perOperation: 1_000_000_000n, daily: 3_000_000_000n },
+  USSD: { perOperation: 50_000_000n, daily: 200_000_000n },
+} as const satisfies Record<string, { readonly perOperation: bigint; readonly daily: bigint }>
+
+export type TransferChannel = keyof typeof CHANNEL_LIMITS
+
+/** FR-6.2: 500 000 UZS to a recipient first seen less than 24 hours ago. */
+export const NEW_RECIPIENT_LIMIT = 50_000_000n
+
+/** FR-6.2, FR-6.3: the window both rules measure over. */
+export const NEW_RECIPIENT_WINDOW_HOURS = 24
+export const VELOCITY_WINDOW_MINUTES = 5
+
+/** FR-6.3: more than this many transfers inside the window blocks. */
+export const VELOCITY_MAX_TRANSFERS = 5
+
 const CANONICAL_MINOR_RE = /^(0|[1-9]\d*)$/
 
 export const moneySchema = z

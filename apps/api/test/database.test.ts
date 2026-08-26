@@ -98,10 +98,18 @@ describe.skipIf(!hasDatabase)("treasury seed (spec §9.4, runbook T-2.8)", () =>
     const { accountId } = await seed()
 
     // §9.4: the treasury is the mint, so it alone may hold a negative balance.
+    //
+    // Restored to whatever it was, not to zero. Writing an absolute value back
+    // silently discarded every ledger entry other suites had funded from the
+    // treasury, and showed up much later as an I-4 drift of 14 600 000 tiyin
+    // in a test that had nothing to do with this one.
+    const before = await prisma.account.findUniqueOrThrow({ where: { id: accountId } })
+
     await prisma.account.update({ where: { id: accountId }, data: { balance: -1000n } })
     const treasury = await prisma.account.findUniqueOrThrow({ where: { id: accountId } })
     expect(treasury.balance).toBe(-1000n)
-    await prisma.account.update({ where: { id: accountId }, data: { balance: 0n } })
+
+    await prisma.account.update({ where: { id: accountId }, data: { balance: before.balance } })
 
     // I-5: an ordinary account may not, and the database is what refuses.
     const holder = await prisma.user.upsert({
