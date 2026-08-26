@@ -1,0 +1,39 @@
+# gitleaks configuration (§17.3, NFR-1.9).
+#
+# The default rules are kept in full. The single allowlist below is scoped to
+# one file and one rule, with the reason written down — a blanket `[allowlist]`
+# would turn the scan into a formality, which is worse than not running it,
+# because the checklist would still say it passed.
+
+title = "wallet"
+
+[extend]
+useDefault = true
+
+# One historical commit, named explicitly.
+#
+# e3f6d6e introduced a hard-coded JWT secret in `apps/api/test/helpers.ts`. It
+# was a test constant, never a real key, and the working tree no longer has one
+# — the helper now generates a random secret per run. History cannot be
+# rewritten here without invalidating open pull requests, so the commit is
+# allowed by SHA rather than the path being allowed forever: a real secret
+# added to that same file tomorrow still fails the scan.
+[allowlist]
+description = "Historical test constant, since removed"
+commits = ["e3f6d6e111892f2f82d58f8790549fdc75ae2edf"]
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API key or secret"
+regex = '''(?i)(?:key|api|token|secret|password|passwd|pw)(?:[0-9a-z\-_\t .]{0,20})(?:[\s|']|[\s|"]){0,3}(?:=|>|:{1,3}=|\|\|:|<=|=>|:|\?=)(?:'|\"|\s|=|\x60){0,5}([0-9a-z\-_.=]{10,150})(?:['|\"|\n|\r|\s|\x60|;|<]|$)'''
+entropy = 3.5
+keywords = ["key", "api", "token", "secret", "password", "passwd", "pw"]
+
+[rules.allowlist]
+description = """
+`.env.example` exists to show the shape of every variable a deploy needs, so a
+placeholder that looks like a secret is the file doing its job. The real value
+lives in `.env`, which is gitignored and untracked — verified by
+`git ls-files`, which lists only the example.
+"""
+paths = ['''apps/api/\.env\.example''']

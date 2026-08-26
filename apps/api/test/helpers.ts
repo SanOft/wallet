@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto"
 import type { PrismaClient } from "@prisma/client"
 import type { Express } from "express"
 import { createApp } from "../src/adapters/http/app.js"
@@ -7,8 +8,15 @@ import { TransferService } from "../src/domain/TransferService.js"
 import { createTokenService } from "../src/infra/jwt.js"
 import { createLogger } from "../src/infra/logger.js"
 
-/** Long enough to satisfy the 256-bit minimum; meaningless outside tests. */
-const TEST_JWT_SECRET = "test-secret-that-is-long-enough-for-hs256-0123456789"
+/**
+ * Generated per run rather than written down.
+ *
+ * A literal here was flagged by gitleaks — correctly, on shape: a scanner
+ * cannot tell a test constant from a real key, and the right answer is not to
+ * teach it to ignore one but to stop having one. Generating it also removes
+ * any chance of the same value drifting into a non-test path.
+ */
+const TEST_JWT_SECRET = randomBytes(32).toString("base64url")
 
 export function testEnv(overrides: NodeJS.ProcessEnv = {}): Env {
   return loadEnv({

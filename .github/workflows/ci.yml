@@ -37,6 +37,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # gitleaks scans commit history, so a shallow clone would check only
+          # the tip and report clean on a secret added two commits ago.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -53,3 +57,10 @@ jobs:
 
       - run: yarn verify
       - run: yarn npm audit --all --recursive
+
+      # NFR-1.9 and 17.3 name gitleaks three times between them. Pinned by
+      # digest rather than by tag: an image tag is mutable, and a secret
+      # scanner is the last place to accept "whatever is there today".
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo"             zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854             detect --source=/repo --config=/repo/.gitleaks.toml --redact --no-banner

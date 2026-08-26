@@ -1072,12 +1072,12 @@ The primary channel of money loss is deceiving the user. The controls live at th
 
 ### 17.3 Security checklist (phase B5 DoD)
 
-- [ ] helmet active, CSP configured; CORS — an explicit origin list
-- [ ] Idempotency-Key enforcement tested on all money endpoints
-- [ ] `yarn npm audit` clean; gitleaks in CI; `.env.example` present, `.env` not in git
-- [ ] Log sample reviewed: no passwords/tokens/PINs/full phone numbers
-- [ ] Every error code in 12.3 tested to return the correct HTTP status
-- [ ] Lockout, rate limit, lookup limit — each covered by its own integration test
+- [x] helmet active, CSP configured (`default-src 'none'` — an API serves no documents); CORS an explicit allowlist, never `*`
+- [x] Idempotency-Key enforcement tested on `/transfers` and `/accounts/topup`
+- [x] `yarn npm audit` clean; gitleaks in CI, pinned by image digest; `.env.example` present, `.env` untracked
+- [x] Log redaction tested against the bytes pino writes, including the access log's URL and query
+- [x] Every error code in 12.3 tested against the status table, transcribed by hand rather than read from the map
+- [~] Rate limit and lookup limit each covered by an integration test. **Lockout (FR-2.3) is deferred to September** by runbook §4, so its test does not exist yet — the row is not fully green and says so.
 
 ---
 

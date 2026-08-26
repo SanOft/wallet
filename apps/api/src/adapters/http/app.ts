@@ -13,6 +13,7 @@ import { authRouter } from "./routes/auth.js"
 import { healthRouter } from "./routes/health.js"
 import { recipientRouter } from "./routes/recipients.js"
 import { transferRouter } from "./routes/transfers.js"
+import { authRateLimit, corsPolicy, globalRateLimit, securityHeaders } from "./security.js"
 
 export interface AppDependencies {
   readonly prisma: PrismaClient
@@ -69,6 +70,12 @@ export function createApp({
   app.set("trust proxy", 1)
   app.disable("x-powered-by")
 
+  // Before anything that reads the request: a rejected origin or a throttled
+  // caller should not reach a handler, and the headers belong on every
+  // response including the error ones.
+  app.use(securityHeaders())
+  app.use(corsPolicy(env))
+
   app.use(requestId)
 
   app.use(
@@ -100,6 +107,12 @@ export function createApp({
   // A wallet payload is a phone number and an amount. A generous limit here is
   // free memory pressure for an attacker to exploit. Parse failures and
   // oversized bodies are mapped to 4xx codes by the error handler.
+  // After the body limit would be too late for a flood of small requests, and
+  // before the routers so a throttled caller costs nothing but the counter.
+  app.use(globalRateLimit())
+  // Registration and login carry their own, much tighter, budget.
+  app.use(["/api/auth/register", "/api/auth/login"], authRateLimit())
+
   app.use(express.json({ limit: "16kb" }))
 
   app.use(healthRouter(prisma))
