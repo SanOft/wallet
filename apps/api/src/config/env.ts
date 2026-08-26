@@ -35,6 +35,17 @@ const envSchema = z.object({
         .filter((origin) => origin.length > 0),
     ),
 
+  /**
+   * HS256 signing secret (§20.2). Rejected below 32 characters because HMAC-SHA256
+   * takes a 256-bit key: a shorter secret is not "weaker but working", it is the
+   * one thing standing between a forged token and an authenticated request, and
+   * a deploy that quietly used `changeme` would look identical to a correct one.
+   */
+  JWT_SECRET: z.string().min(32, { error: "JWT_SECRET must be at least 32 characters (256 bits)" }),
+
+  /** Cookie domain for the refresh token (§20.2). Omitted in development. */
+  REFRESH_COOKIE_DOMAIN: z.string().optional(),
+
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 })
 

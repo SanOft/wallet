@@ -2,8 +2,8 @@ import express from "express"
 import request from "supertest"
 import { describe, expect, it } from "vitest"
 import { REQUEST_ID_HEADER, requestId } from "../src/adapters/http/middleware/requestId.js"
-import { loadEnv } from "../src/config/env.js"
 import { createLogger } from "../src/infra/logger.js"
+import { testEnv } from "./helpers.js"
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
@@ -43,7 +43,7 @@ describe("request identity (NFR-5.1)", () => {
 /** Collects the bytes pino actually writes, rather than trusting its config. */
 function capturingLogger() {
   const lines: string[] = []
-  const env = loadEnv({ DATABASE_URL: "postgresql://unused", LOG_LEVEL: "debug" })
+  const env = testEnv({ LOG_LEVEL: "debug" })
   const log = createLogger(env, {
     write(chunk: string) {
       lines.push(chunk)

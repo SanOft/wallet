@@ -38,6 +38,46 @@ export class ValidationError extends DomainError {
   }
 }
 
+/**
+ * Registration was refused. FR-1.5: the reason is deliberately not carried,
+ * because "this number is taken" is a membership oracle — an attacker can walk
+ * a number range and learn who banks here.
+ */
+export class RegistrationFailedError extends DomainError {
+  constructor() {
+    super("REGISTRATION_FAILED", "Registration failed")
+  }
+}
+
+/**
+ * FR-2.2: one error for a number that does not exist and for a wrong password.
+ * The text is identical, the status is identical, and the caller spends the
+ * same time on both — see `dummyHash` in infra/crypto.ts for the last part.
+ */
+export class InvalidCredentialsError extends DomainError {
+  constructor() {
+    super("AUTH_INVALID_CREDENTIALS", "Invalid credentials")
+  }
+}
+
+/** The refresh token is unknown, expired or already revoked. */
+export class RefreshTokenInvalidError extends DomainError {
+  constructor() {
+    super("AUTH_TOKEN_EXPIRED", "Refresh token is not valid")
+  }
+}
+
+/**
+ * FR-2.7: a refresh token that has already been exchanged came back. Either the
+ * client replayed it or someone stole it, and we cannot tell which — so the
+ * whole family is revoked and every device signs in again.
+ */
+export class RefreshTokenReusedError extends DomainError {
+  constructor() {
+    super("AUTH_REFRESH_REUSED", "Refresh token reuse detected")
+  }
+}
+
 /** Balance too low. Never says by how much — that is the caller's own balance to read. */
 export class InsufficientFundsError extends DomainError {
   constructor() {

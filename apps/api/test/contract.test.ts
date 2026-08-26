@@ -2,9 +2,7 @@ import type { PrismaClient } from "@prisma/client"
 import { apiErrorSchema, isRetryable } from "@wallet/shared"
 import request from "supertest"
 import { describe, expect, it } from "vitest"
-import { createApp } from "../src/adapters/http/app.js"
-import { loadEnv } from "../src/config/env.js"
-import { createLogger } from "../src/infra/logger.js"
+import { buildApp, PRISMA_STUB } from "./helpers.js"
 
 /**
  * Exercises the app as it is actually composed, rather than a bespoke pipeline
@@ -13,20 +11,8 @@ import { createLogger } from "../src/infra/logger.js"
  * escaped §12.3 until a test called `createApp` itself.
  */
 
-const PRISMA_STUB = {
-  $queryRaw: async () => [{ migration_name: "00000000000000_stub" }],
-} as unknown as PrismaClient
-
-/** Captures the bytes the logger writes so log assertions read real output. */
 function appWithCapturedLog() {
-  const lines: string[] = []
-  const env = loadEnv({ DATABASE_URL: "postgresql://unused", LOG_LEVEL: "info" })
-  const log = createLogger(env, {
-    write(chunk: string) {
-      lines.push(chunk)
-    },
-  })
-  return { app: createApp({ prisma: PRISMA_STUB, log }), logText: () => lines.join("") }
+  return buildApp(PRISMA_STUB)
 }
 
 describe("framework failures stay inside the catalog (§12.3)", () => {
@@ -134,17 +120,11 @@ describe("access logging never writes a subscriber identity (NFR-5.2)", () => {
         throw new Error("db is gone")
       },
     } as unknown as PrismaClient
-    const lines: string[] = []
-    const env = loadEnv({ DATABASE_URL: "postgresql://unused", LOG_LEVEL: "info" })
-    const log = createLogger(env, {
-      write(chunk: string) {
-        lines.push(chunk)
-      },
-    })
-    const res = await request(createApp({ prisma: broken, log })).get("/health")
+    const { app: brokenApp, logText: brokenLog } = buildApp(broken)
+    const res = await request(brokenApp).get("/health")
 
     expect(res.status).toBe(503)
     // A total database outage must not be the one event that leaves no trace.
-    expect(lines.join("")).toContain('"level":"error"')
+    expect(brokenLog()).toContain('"level":"error"')
   })
 })

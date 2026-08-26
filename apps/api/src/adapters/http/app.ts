@@ -1,14 +1,21 @@
 import type { PrismaClient } from "@prisma/client"
 import express, { type Express } from "express"
 import { pinoHttp } from "pino-http"
+import type { Env } from "../../config/env.js"
+import type { AuthService } from "../../domain/AuthService.js"
+import type { TokenService } from "../../infra/jwt.js"
 import { type Logger, serializeError, serializeRequest } from "../../infra/logger.js"
 import { createErrorHandler, notFoundHandler } from "./middleware/errorHandler.js"
 import { requestId } from "./middleware/requestId.js"
+import { authRouter } from "./routes/auth.js"
 import { healthRouter } from "./routes/health.js"
 
 export interface AppDependencies {
   readonly prisma: PrismaClient
   readonly log: Logger
+  readonly env: Env
+  readonly auth: AuthService
+  readonly tokens: TokenService
 }
 
 /**
@@ -24,7 +31,7 @@ export interface AppDependencies {
  *      error instead of Express's HTML page
  *   6. the error handler, which must come last to catch what they throw
  */
-export function createApp({ prisma, log }: AppDependencies): Express {
+export function createApp({ prisma, log, env, auth, tokens }: AppDependencies): Express {
   const app = express()
 
   // Render sits in front of this process; without it every client IP in the
@@ -73,6 +80,7 @@ export function createApp({ prisma, log }: AppDependencies): Express {
   app.use(express.json({ limit: "16kb" }))
 
   app.use(healthRouter(prisma))
+  app.use(authRouter({ auth, tokens, env }))
 
   app.use(notFoundHandler)
 

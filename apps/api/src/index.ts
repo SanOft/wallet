@@ -1,5 +1,7 @@
 import { createApp } from "./adapters/http/app.js"
 import { loadEnv } from "./config/env.js"
+import { AuthService } from "./domain/AuthService.js"
+import { createTokenService } from "./infra/jwt.js"
 import { createLogger } from "./infra/logger.js"
 import { createPrismaClient } from "./infra/prisma.js"
 
@@ -27,7 +29,10 @@ async function main(): Promise<void> {
     process.exit(1)
   })
 
-  const app = createApp({ prisma, log })
+  const tokens = createTokenService(env)
+  const auth = new AuthService({ prisma, tokens })
+
+  const app = createApp({ prisma, log, env, auth, tokens })
   const server = app.listen(env.PORT, () => {
     log.info({ port: env.PORT, env: env.NODE_ENV }, "wallet-api listening")
   })
