@@ -1,6 +1,6 @@
 import { idempotencyKeySchema, transferRequestSchema, transferResponseSchema } from "@wallet/shared"
 import { Router } from "express"
-import { ValidationError } from "../../../domain/errors.js"
+import { DomainError, ValidationError } from "../../../domain/errors.js"
 import type { TransferResult, TransferService } from "../../../domain/TransferService.js"
 import type { TokenService } from "../../../infra/jwt.js"
 import { requireAuth } from "../middleware/requireAuth.js"
@@ -33,9 +33,13 @@ export function transferRouter({ transfers, tokens }: TransferRouterDependencies
 
     const input = transferRequestSchema.parse(req.body)
 
+    // `requireAuth` guarantees this, but falling back to an empty string would
+    // turn a middleware regression into a malformed query rather than a refusal.
+    if (!req.userId) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
+
     const result = await transfers.execute({
       // Never from the body: the sender is whoever holds the token (FR-4.5).
-      senderUserId: req.userId ?? "",
+      senderUserId: req.userId,
       recipientPhone: input.phone,
       amount: input.amount,
       idempotencyKey: key.data,
@@ -57,7 +61,8 @@ function toWire(result: TransferResult) {
     channel: result.channel,
     type: result.type,
     createdAt: result.createdAt.toISOString(),
-    completedAt: result.completedAt.toISOString(),
+    completedAt: result.completedAt?.toISOString() ?? null,
+    failReason: result.failReason,
     senderBalanceAfter: result.senderBalanceAfter.toString(),
   }
 }

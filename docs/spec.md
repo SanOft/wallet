@@ -728,7 +728,7 @@ stateDiagram-v2
 ### 12.2 Conventions
 
 - **Amounts:** always strings in JSON (`"amount": "5000000"`), in tiyin (9.3).
-- **Idempotency-Key:** UUID v4, client-generated; mandatory on every money-moving POST (`/transfers`, `/accounts/topup`) — a request without a key gets `400`.
+- **Idempotency-Key:** UUID v4, client-generated; mandatory on every money-moving POST (`/transfers`, `/accounts/topup`) — a request without a key gets `400`. A key is **single-use for good**: the stored response is kept for 24 hours (FR-4.4), and after that the key is retired rather than freed, because the transfer row keeps it permanently. Reusing a key past its retention returns `409 IDEMPOTENCY_CONFLICT`, which is a client error and is not retried. A client generates a fresh UUID per request, so this only bites a client that is already wrong.
 - **Pagination:** cursor-based; response includes `nextCursor` (`null` on the last page). Offset pagination is not used (new rows shift the pages).
 - **Dates:** ISO 8601 UTC (`2026-08-11T14:30:00Z`); converting to local time is the client's job.
 - **Versioning:** none in the MVP; on a breaking change, `/api/v2/...` (a v2 decision).

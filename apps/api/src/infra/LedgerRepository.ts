@@ -14,6 +14,15 @@ import type { PrismaClient } from "@prisma/client"
  * express through it.
  */
 
+/**
+ * The delegate is narrowed to three read/append methods, not handed over whole.
+ * `Pick<PrismaClient, "ledgerEntry">` looked like a narrowing and was not: it
+ * exposed `update`, `delete` and `upsert` to anyone holding the exported type,
+ * so a caller importing only from this module could write a mutation that
+ * type-checked. The triggers still refused it at runtime, but I-3 asks for both
+ * halves and only one was there.
+ */
+
 /** Everything a ledger write needs, and nothing that could address a row. */
 export interface LedgerEntryDraft {
   readonly accountId: string
@@ -30,7 +39,9 @@ export interface LedgerEntryDraft {
  * own — the caller decides the boundary, which for a transfer is the whole
  * double-entry pair (FR-4.3).
  */
-export type LedgerClient = Pick<PrismaClient, "ledgerEntry">
+export type LedgerClient = {
+  readonly ledgerEntry: Pick<PrismaClient["ledgerEntry"], "createMany" | "aggregate" | "findMany">
+}
 
 export class LedgerRepository {
   readonly #client: LedgerClient

@@ -40,8 +40,12 @@ export const transferResponseSchema = z.object({
   channel: transferChannelSchema,
   type: transferTypeSchema,
   /** ISO 8601 UTC, produced by the server; the client clock is never used (D-10). */
-  createdAt: z.string(),
-  completedAt: z.string().nullable(),
+  // `z.iso.datetime()` rather than a bare string: §12.2 says ISO 8601 UTC, and
+  // a bare `z.string()` let `Date.prototype.toString()` through unnoticed —
+  // `respond()` validates against this schema, so the schema is the check.
+  createdAt: z.iso.datetime(),
+  completedAt: z.iso.datetime().nullable(),
+  failReason: z.string().nullable(),
   /** The sender's balance after this transfer, so the client need not re-fetch. */
   senderBalanceAfter: z.string(),
 })
@@ -53,6 +57,8 @@ export type TransferResponse = z.infer<typeof transferResponseSchema>
  * *request*, not the transfer.
  */
 export const idempotencyKeySchema = z
-  .string()
-  .uuid({ error: "field.required" })
+  // v4 specifically (§12.2). `z.uuid()` accepts every version including the
+  // nil UUID, so a client bug sending all zeroes would get exactly one
+  // successful transfer and then `IDEMPOTENCY_CONFLICT` forever.
+  .uuidv4({ error: "field.required" })
   .describe("Idempotency-Key header")

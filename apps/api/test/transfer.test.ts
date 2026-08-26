@@ -245,6 +245,21 @@ describe.skipIf(!hasDatabase)("money transfer (FR-4)", () => {
       where: { fromAccountId: sender.accountId, type: "P2P", status: "COMPLETED" },
     })
     expect(completed).toBe(1)
+
+    // 18.2 S-2 says "one COMPLETED, one FAILED". Counting only the completed
+    // one passed for as long as FAILED was unreachable and failReason was a
+    // dead column.
+    const failed = await prisma.transfer.findMany({
+      where: { fromAccountId: sender.accountId, status: "FAILED" },
+    })
+    expect(failed).toHaveLength(1)
+    expect(failed[0]?.failReason).toBe("INSUFFICIENT_FUNDS")
+
+    // I-6: a FAILED transfer carries no ledger entries.
+    const strayEntries = await prisma.ledgerEntry.count({
+      where: { transferId: failed[0]?.id ?? "" },
+    })
+    expect(strayEntries).toBe(0)
   })
 
   it("S-3: a caller cannot spend an account they do not own", async () => {
@@ -253,9 +268,32 @@ describe.skipIf(!hasDatabase)("money transfer (FR-4)", () => {
     const recipient = await newUser()
     await fund(victim.accountId, 1_000_000n)
 
-    // The attacker holds their own token; the sender account is resolved from
-    // it, so there is no id they could substitute. The transfer must fail on
-    // their own empty balance, never touch the victim's.
+    // The previous version only sent from the attacker's own empty account and
+    // asserted INSUFFICIENT_FUNDS — true of any unfunded caller, and evidence
+    // of nothing about ownership. A reviewer patched the adapter to honour a
+    // client-supplied sender id, drained the victim for a 201, and this test
+    // stayed green.
+    //
+    // These bodies each try to name someone else. All must be ignored: the
+    // sender comes from the token or from nowhere.
+    for (const injection of [
+      { senderUserId: victim.accountId },
+      { fromAccountId: victim.accountId },
+      { accountId: victim.accountId },
+      { userId: victim.accountId },
+    ]) {
+      const injected = await request(attacker.app)
+        .post("/api/transfers")
+        .set("authorization", `Bearer ${attacker.token}`)
+        .set("idempotency-key", randomUUID())
+        .send({ phone: recipient.phone, amount: "300000", ...injection })
+
+      // `strictObject` refuses the unknown field outright; even if it were
+      // accepted, nothing in the service reads one.
+      expect(injected.status).not.toBe(201)
+      expect([400, 422]).toContain(injected.status)
+    }
+
     const res = await send(attacker.app, attacker.token, {
       phone: recipient.phone,
       amount: "300000",
@@ -412,6 +450,223 @@ describe.skipIf(!hasDatabase)("anti-fraud limits (FR-6)", () => {
       path: ["amount"],
       code: "money.invalid_step",
     })
+  })
+})
+
+describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
+  let prisma: PrismaClient
+  let treasuryAccountId: string
+
+  beforeAll(async () => {
+    prisma = createPrismaClient(testEnv({ ...process.env }))
+    treasuryAccountId = (await seed(prisma)).accountId
+  })
+  afterAll(async () => {
+    await prisma.$disconnect()
+  })
+
+  /** Registers a holder and, if asked, funds it straight from the treasury. */
+  async function holder(funded: bigint) {
+    const { app } = buildApp(prisma, { ...process.env })
+    const phone = uniquePhone()
+    const res = await request(app)
+      .post("/api/auth/register")
+      .send({ phone, firstName: "T", lastName: "H", password: PASSWORD })
+    const account = await prisma.account.findFirstOrThrow({ where: { user: { phone } } })
+
+    if (funded > 0n) {
+      await prisma.$transaction(async (tx) => {
+        const treasury = await tx.account.findUniqueOrThrow({ where: { id: treasuryAccountId } })
+        const transfer = await tx.transfer.create({
+          data: {
+            fromAccountId: treasuryAccountId,
+            toAccountId: account.id,
+            amount: funded,
+            type: "TOPUP",
+            channel: "WEB",
+            idempotencyKey: randomUUID(),
+            status: "PENDING",
+          },
+        })
+        await new LedgerRepository(tx).append([
+          {
+            accountId: treasuryAccountId,
+            transferId: transfer.id,
+            amount: -funded,
+            balanceAfter: treasury.balance - funded,
+          },
+          {
+            accountId: account.id,
+            transferId: transfer.id,
+            amount: funded,
+            balanceAfter: account.balance + funded,
+          },
+        ])
+        await tx.account.update({
+          where: { id: treasuryAccountId },
+          data: { balance: treasury.balance - funded },
+        })
+        await tx.account.update({ where: { id: account.id }, data: { balance: funded } })
+        await tx.transfer.update({
+          where: { id: transfer.id },
+          data: { status: "COMPLETED", completedAt: new Date() },
+        })
+      })
+    }
+
+    const user = await prisma.user.findUniqueOrThrow({ where: { phone } })
+    return { app, phone, userId: user.id, accountId: account.id, token: res.body.accessToken }
+  }
+
+  it("FR-6.2: the new-recipient cap is a 24-hour total, not a per-transfer ceiling", async () => {
+    // Capping each transfer left the real ceiling at the daily limit -
+    // 30 000 000 UZS rather than 500 000, sixty times the clause, on the one
+    // control 17.2 names against an account-takeover drain. Four transfers of
+    // exactly the cap went straight through.
+    const sender = await holder(300_000_000n)
+    const stranger = await holder(0n)
+    const transfers = new TransferService({ prisma })
+
+    // 400 000 UZS: under the cap, accepted.
+    await transfers.execute({
+      senderUserId: sender.userId,
+      recipientPhone: stranger.phone,
+      amount: 40_000_000n,
+      idempotencyKey: randomUUID(),
+      channel: "WEB",
+    })
+
+    // Another 200 000 would take the 24-hour total to 600 000, over the cap.
+    await expect(
+      transfers.execute({
+        senderUserId: sender.userId,
+        recipientPhone: stranger.phone,
+        amount: 20_000_000n,
+        idempotencyKey: randomUUID(),
+        channel: "WEB",
+      }),
+    ).rejects.toMatchObject({
+      code: "LIMIT_EXCEEDED",
+      details: [{ path: ["amount"], code: "limit.new_recipient" }],
+    })
+  })
+
+  it("FR-6.3: more than five transfers in five minutes blocks", async () => {
+    const sender = await holder(10_000_000n)
+    const transfers = new TransferService({ prisma })
+    const recipients = []
+    for (let i = 0; i < 6; i++) recipients.push(await holder(0n))
+
+    const outcomes: string[] = []
+    for (const recipient of recipients) {
+      try {
+        await transfers.execute({
+          senderUserId: sender.userId,
+          recipientPhone: recipient.phone,
+          amount: 100_000n,
+          idempotencyKey: randomUUID(),
+          channel: "WEB",
+        })
+        outcomes.push("ok")
+      } catch (error) {
+        outcomes.push((error as { details?: { code: string }[] }).details?.[0]?.code ?? "other")
+      }
+    }
+
+    expect(outcomes.slice(0, 5)).toEqual(["ok", "ok", "ok", "ok", "ok"])
+    expect(outcomes[5]).toBe("limit.velocity")
+  })
+
+  it("FR-6.1: the daily total is capped per channel", async () => {
+    const sender = await holder(3_500_000_000n)
+    const recipient = await holder(0n)
+    const transfers = new TransferService({ prisma })
+
+    // An established relationship, so FR-6.2 does not fire before FR-6.1: one
+    // small transfer, back-dated past the 24-hour new-recipient window.
+    await transfers.execute({
+      senderUserId: sender.userId,
+      recipientPhone: recipient.phone,
+      amount: 100_000n,
+      idempotencyKey: randomUUID(),
+      channel: "WEB",
+    })
+    await prisma.transfer.updateMany({
+      where: { fromAccountId: sender.accountId },
+      data: { createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000) },
+    })
+
+    // Three transfers of 10 000 000 UZS reach the 30 000 000 daily cap. Their
+    // timestamps are moved back after each one so velocity does not fire
+    // first; the daily window is 24 hours, so they still count.
+    for (let i = 0; i < 3; i++) {
+      await transfers.execute({
+        senderUserId: sender.userId,
+        recipientPhone: recipient.phone,
+        amount: 1_000_000_000n,
+        idempotencyKey: randomUUID(),
+        channel: "WEB",
+      })
+      // Only the ones just made: back-dating everything would drag the
+      // relationship-establishing transfer back inside the 24-hour window and
+      // let FR-6.2 fire before FR-6.1, which is what this test is not about.
+      await prisma.transfer.updateMany({
+        where: {
+          fromAccountId: sender.accountId,
+          createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
+        },
+        data: { createdAt: new Date(Date.now() - 10 * 60 * 1000) },
+      })
+    }
+
+    await expect(
+      transfers.execute({
+        senderUserId: sender.userId,
+        recipientPhone: recipient.phone,
+        amount: 100_000n,
+        idempotencyKey: randomUUID(),
+        channel: "WEB",
+      }),
+    ).rejects.toMatchObject({
+      code: "LIMIT_EXCEEDED",
+      details: [{ path: ["amount"], code: "limit.daily" }],
+    })
+  })
+
+  it("FR-4.4: a key past its retention is retired, and says so", async () => {
+    // The defect was that it answered 500 INTERNAL — "the operation was not
+    // performed" — for a key whose transfer had completed. It now answers 409,
+    // which is in the catalogue and is not retryable: the transfer row keeps
+    // the key permanently, so a key is single-use for good. A client generates
+    // a fresh UUID per request, so reusing one a day later is a client bug and
+    // deserves a client error.
+    const sender = await holder(10_000_000n)
+    const recipient = await holder(0n)
+    const transfers = new TransferService({ prisma })
+    const key = randomUUID()
+
+    await transfers.execute({
+      senderUserId: sender.userId,
+      recipientPhone: recipient.phone,
+      amount: 100_000n,
+      idempotencyKey: key,
+      channel: "WEB",
+    })
+
+    await prisma.idempotencyRecord.update({
+      where: { key },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    })
+
+    await expect(
+      transfers.execute({
+        senderUserId: sender.userId,
+        recipientPhone: recipient.phone,
+        amount: 100_000n,
+        idempotencyKey: key,
+        channel: "WEB",
+      }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" })
   })
 })
 
