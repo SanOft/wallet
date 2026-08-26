@@ -232,6 +232,7 @@ wallet/
 | [`docs/spec.md`](docs/spec.md) | The technical specification: product, FR/NFR, architecture, data model, flows, API contract, UI/UX, threat model, test strategy |
 | [`docs/runbook.md`](docs/runbook.md) | The execution plan: numbered tasks, the files each touches, acceptance criteria |
 | [`docs/PARKING.md`](docs/PARKING.md) | Known gaps, triaged against the product bar |
+| [`docs/adr/`](docs/adr/) | Decision records — what was chosen, what it cost, what was rejected |
 
 ### Contributing
 
@@ -403,6 +404,8 @@ Tuzilish daraxti yuqoridagi [Repository layout](#repository-layout) bo'limida.
 | `packages/shared/src/error.ts` | 19 ta API kodi, maydon kodlari, HTTP status xaritasi |
 | `docs/spec.md` | Nima quriladi |
 | `docs/runbook.md` | Qanday tartibda va qanday tekshirib |
+| `docs/PARKING.md` | Ma'lum kamchiliklar, mahsulot mezoni bo'yicha tartiblangan |
+| `docs/adr/` | Qaror yozuvlari — nima tanlandi, qancha turadi, nima rad etildi |
 | `tsconfig.base.json` | Qat'iy rejim va sakkizta qo'shimcha flag |
 
 ### Bilib qo'yishga arziydigan qarorlar
