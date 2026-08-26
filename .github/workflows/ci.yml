@@ -8,6 +8,30 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+
+    # Integration tests run against a real database on every pull request
+    # (spec §18.1). A mock would not exercise the CHECK constraints that hold
+    # the ledger invariants, which is the half most worth testing.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: wallet
+          POSTGRES_PASSWORD: wallet
+          POSTGRES_DB: wallet
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Ephemeral service container on localhost; these credentials exist for
+      # the length of one job and reach nothing outside it.
+      DATABASE_URL: postgresql://wallet:wallet@localhost:5432/wallet?schema=public
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,5 +39,14 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: yarn install --immutable
+
+      # The Prisma client is generated, not committed, so it has to exist
+      # before anything typechecks against it.
+      - run: yarn workspace @wallet/api exec prisma generate
+
+      # `migrate deploy` applies committed migrations without trying to author
+      # new ones, which is what a non-interactive environment needs.
+      - run: yarn workspace @wallet/api exec prisma migrate deploy
+
       - run: yarn verify
       - run: yarn npm audit --all --recursive

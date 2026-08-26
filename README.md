@@ -67,7 +67,7 @@ flowchart TB
         USSD["USSD channel<br/>phone without internet<br/><i>September</i>"]
     end
     subgraph server["Server"]
-        API["apps/api — Express<br/>ports and adapters<br/><i>not started</i>"]
+        API["apps/api — Express<br/>ports and adapters<br/><b>skeleton built</b>"]
     end
     PG[("PostgreSQL<br/>double-entry ledger")]
     SHARED["packages/shared — Zod schemas + types<br/><b>built</b>"]
@@ -110,11 +110,12 @@ one, so "works on my machine" cannot happen.
 yarn verify
 ```
 
-It runs four stages, cheapest first — there is no reason to wait forty seconds
-for a build when lint fails in two:
+It runs four stages. Lint is first because it is the cheapest. Build is second,
+not last: `apps/*` typecheck against the emitted types of `packages/*`, so on a
+fresh clone there is nothing to typecheck against until the build has run.
 
 ```
-lint  →  typecheck  →  test  →  build
+lint  →  build  →  typecheck  →  test
 ```
 
 | Command | What it does |
@@ -135,7 +136,13 @@ first, and a fix can break something upstream.
 ```
 wallet/
 ├── apps/
-│   ├── api/              @wallet/api    — backend (stub)
+│   ├── api/              @wallet/api    — Express backend
+│   │   ├── prisma/       schema, migrations, treasury seed
+│   │   ├── src/
+│   │   │   ├── adapters/http/  routes, middleware — parse and format only
+│   │   │   ├── domain/         error vocabulary; knows nothing about HTTP
+│   │   │   └── infra/          logger, Prisma client
+│   │   └── test/
 │   └── web/              @wallet/web    — PWA (stub)
 ├── packages/
 │   └── shared/           @wallet/shared — contracts, the only built package
@@ -143,7 +150,7 @@ wallet/
 │       │   ├── phone.ts    E.164, region registry, normalise, format
 │       │   ├── money.ts    ISO 4217 minor units, limits, format
 │       │   ├── auth.ts     register / login / public user / auth response
-│       │   ├── error.ts    15 API codes, field codes, HTTP status map
+│       │   ├── error.ts    18 API codes, field codes, HTTP status map
 │       │   └── index.ts    barrel
 │       └── test/
 ├── docs/
@@ -223,12 +230,14 @@ live". Frontend sentyabrda.
 | Monorepo skeleti — Yarn 4 workspace'lari, qat'iy TypeScript | Tayyor |
 | `@wallet/shared` — telefon, pul, auth va xato kontraktlari | Tayyor |
 | `yarn verify` sikli va har bir PR uchun CI | Tayyor |
-| `@wallet/api` — Express, Prisma, ledger, o'tkazmalar | Boshlanmagan |
+| `@wallet/api` — Express skeleti, xato kontrakti, sxema, `/health` | Tayyor |
+| Auth, ledger, o'tkazmalar | 3–4-kun |
 | `@wallet/web` — React PWA, offline outbox | Sentyabr |
 | USSD adapteri | Sentyabr |
 
-`apps/api` va `apps/web` hozircha bo'sh workspace zaglushkalari. Repozitoriyda
-hali hech narsa ma'lumotlar bazasi bilan gaplashmaydi.
+`apps/web` hali bo'sh workspace zaglushkasi. `apps/api` ko'tariladi, `/health`
+ni xizmat qiladi va yettita jadvalli sxemaga egalik qiladi — lekin hali pul
+harakatlanmaydi: transfer xizmati va autentifikatsiya 3- va 4-kunlarda.
 
 ### Arxitektura
 
@@ -269,11 +278,12 @@ bo'lishi mumkin emas.
 yarn verify
 ```
 
-U to'rt bosqichni, eng arzonidan boshlab yurgizadi — lint 2 soniyada yiqilsa,
-build'ni 40 soniya kutishning ma'nosi yo'q:
+U to'rt bosqichni yurgizadi. Lint birinchi, chunki eng arzoni. Build ikkinchi,
+oxirgi emas: `apps/*` `packages/*` ning **chiqarilgan** tiplariga qarab
+tekshiriladi, ya'ni toza klonda build yurmaguncha tekshiradigan narsa yo'q.
 
 ```
-lint  →  typecheck  →  test  →  build
+lint  →  build  →  typecheck  →  test
 ```
 
 | Buyruq | Vazifasi |
@@ -298,7 +308,7 @@ Tuzilish daraxti yuqoridagi [Repository layout](#repository-layout) bo'limida.
 | `packages/shared/src/phone.ts` | E.164, region registri, normalizatsiya, formatlash |
 | `packages/shared/src/money.ts` | ISO 4217 kichik birliklari, limitlar, formatlash |
 | `packages/shared/src/auth.ts` | Ro'yxatdan o'tish / kirish / ochiq foydalanuvchi / auth javobi |
-| `packages/shared/src/error.ts` | 15 ta API kodi, maydon kodlari, HTTP status xaritasi |
+| `packages/shared/src/error.ts` | 18 ta API kodi, maydon kodlari, HTTP status xaritasi |
 | `docs/spec.md` | Nima quriladi |
 | `docs/runbook.md` | Qanday tartibda va qanday tekshirib |
 | `tsconfig.base.json` | Qat'iy rejim va sakkizta qo'shimcha flag |
