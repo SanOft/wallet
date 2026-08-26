@@ -59,6 +59,14 @@ describe.skipIf(!hasDatabase)("money transfer (FR-4)", () => {
    */
   async function fund(accountId: string, amount: bigint): Promise<void> {
     await prisma.$transaction(async (tx) => {
+      // The same lock `TransferService.topUp` takes, in the same order: lock,
+      // then read. A fixture that writes the treasury without it can interleave
+      // with a real top-up under ReadCommitted and lose one of the two
+      // decrements — the entries both persist, so the journal stays balanced
+      // while the cached balance is short. That is exactly the I-4 drift found
+      // in the shared development database (three breaks, 2 300 000 tiyin).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('wallet:treasury'))`
+
       const treasury = await tx.account.findUniqueOrThrow({ where: { id: treasuryAccountId } })
       const target = await tx.account.findUniqueOrThrow({ where: { id: accountId } })
 
@@ -476,6 +484,9 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
 
     if (funded > 0n) {
       await prisma.$transaction(async (tx) => {
+        // Lock before reading, as `fund` above and `TransferService.topUp` do.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('wallet:treasury'))`
+
         const treasury = await tx.account.findUniqueOrThrow({ where: { id: treasuryAccountId } })
         const transfer = await tx.transfer.create({
           data: {

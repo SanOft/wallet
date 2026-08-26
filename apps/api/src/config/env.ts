@@ -24,7 +24,23 @@ const envSchema = z.object({
       error: "DATABASE_URL must be a postgresql:// connection string",
     }),
 
-  /** Comma-separated allowlist. Never `*` (NFR-1.8). */
+  /**
+   * Comma-separated allowlist. Never `*` (NFR-1.8) — and the rule is enforced
+   * here rather than only stated.
+   *
+   * `*` was previously accepted. It happens to be inert, because no browser
+   * sends `Origin: *`, but `null` is not: sandboxed iframes, `data:` documents
+   * and some cross-origin redirects all send it, and the allowlist grants
+   * `credentials: true`. One typo, or a deploy template rendering an unset
+   * variable as the literal string `null`, was a credentialed grant to an
+   * origin that cannot be attributed to anyone.
+   *
+   * Each entry is normalised through `URL`, so `https://Wallet.example.com` and
+   * a trailing slash both become the origin a browser will actually send.
+   * Without that, a mixed-case value in a hosting dashboard produces an
+   * allowlist that silently never matches — the failure looks like a CORS bug
+   * and gets "fixed" with a wildcard.
+   */
   CORS_ORIGINS: z
     .string()
     .default("")
@@ -33,6 +49,42 @@ const envSchema = z.object({
         .split(",")
         .map((origin) => origin.trim())
         .filter((origin) => origin.length > 0),
+    )
+    .superRefine((origins, ctx) => {
+      for (const origin of origins) {
+        if (origin === "*" || origin.toLowerCase() === "null") {
+          ctx.addIssue({
+            code: "custom",
+            message: `CORS_ORIGINS must name real origins; "${origin}" is not one (NFR-1.8)`,
+          })
+          continue
+        }
+        let parsed: URL
+        try {
+          parsed = new URL(origin)
+        } catch {
+          ctx.addIssue({
+            code: "custom",
+            message: `CORS_ORIGINS entry "${origin}" is not a valid origin`,
+          })
+          continue
+        }
+        if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") {
+          ctx.addIssue({
+            code: "custom",
+            message: `CORS_ORIGINS entry "${origin}" must be https (localhost excepted)`,
+          })
+        }
+      }
+    })
+    .transform((origins) =>
+      origins.map((origin) => {
+        try {
+          return new URL(origin).origin
+        } catch {
+          return origin
+        }
+      }),
     ),
 
   /**

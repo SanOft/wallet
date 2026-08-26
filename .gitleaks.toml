@@ -1,0 +1,37 @@
+# gitleaks configuration (§17.3, NFR-1.9).
+#
+# The default rules are used unmodified. This file adds no rule of its own and
+# redefines none: a rule declared here with the id of a default one *replaces*
+# it, so a hand-written copy can only ever be staler and narrower than the one
+# gitleaks maintains. That is not hypothetical — the previous version of this
+# file redefined `generic-api-key` with a capture class of `[0-9a-z\-_.=]`,
+# which omits `+` and `/` and therefore could not see a standard-alphabet
+# base64 secret anywhere in the repository, while this header claimed the
+# defaults were kept in full. Verified after the change: a random base64 value
+# containing `+` and `/` is now reported.
+#
+# There is no allowlist here, deliberately. Two problems exist in this history —
+# a long placeholder in `apps/api/.env.example` and a hard-coded test constant
+# in `apps/api/test/helpers.ts` — and both are fixed in the working tree: the
+# placeholder is empty and the helper generates a secret per run. They remain in
+# commits that cannot be rewritten, so they are accepted individually by
+# fingerprint in `.gitleaks-baseline.json`, which CI passes with
+# `--baseline-path`.
+#
+# A fingerprint is commit, file, rule and line. That makes it precise and it
+# makes it brittle in exactly one way worth writing down: rebasing or
+# squash-merging changes commit SHAs, so the baseline stops matching and CI
+# fails until it is regenerated. That is not a false alarm — it is the scanner
+# correctly reporting findings in commits it has not been told about — and the
+# fix is to regenerate the file, never to widen the exception.
+#
+# A path exception was tried first and rejected on evidence: scoping it to the
+# commit *and* the path still did not report a fresh secret appended to
+# `.env.example`, so the exception was wider than its own description. A
+# fingerprint is commit, file, rule and line together, which is the size of the
+# actual problem.
+
+title = "wallet"
+
+[extend]
+useDefault = true
