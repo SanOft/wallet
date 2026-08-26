@@ -26,6 +26,13 @@ export const transferRequestSchema = z.strictObject({
 })
 export type TransferRequest = z.infer<typeof transferRequestSchema>
 
+/**
+ * `POST /api/accounts/topup` takes nothing: FR-10.1 fixes the amount and the
+ * account comes from the token. Strict, so a client that thinks it chooses
+ * either is told rather than silently ignored.
+ */
+export const topUpRequestSchema = z.strictObject({})
+
 export const transferStatusSchema = z.enum(["PENDING", "COMPLETED", "FAILED"])
 export type TransferStatus = z.infer<typeof transferStatusSchema>
 
@@ -62,3 +69,77 @@ export const idempotencyKeySchema = z
   // successful transfer and then `IDEMPOTENCY_CONFLICT` forever.
   .uuidv4({ error: "field.required" })
   .describe("Idempotency-Key header")
+
+/**
+ * `GET /api/accounts` (FR-3, §12.1). One UZS account in the MVP, but the shape
+ * is a list so adding a currency in v2 is not a breaking change (§21 Q-3).
+ */
+export const accountSchema = z.object({
+  id: z.string(),
+  currency: z.string(),
+  /** Minor units as a string (§12.2). */
+  balance: z.string(),
+  type: z.enum(["USER", "TREASURY"]),
+})
+
+export const accountsResponseSchema = z.object({
+  accounts: z.array(accountSchema),
+  user: z.object({
+    id: z.string(),
+    phone: z.string(),
+    firstName: z.string(),
+    lastName: z.string(),
+  }),
+})
+export type AccountsResponse = z.infer<typeof accountsResponseSchema>
+
+/**
+ * `GET /api/recipients/lookup` (FR-4.9).
+ *
+ * The name is masked before it leaves the server, so the response cannot be
+ * used to harvest full names by walking a number range. Only an exact,
+ * complete-number match returns anything at all.
+ */
+export const recipientLookupSchema = z.object({
+  phone: z.string(),
+  /** `MUHAMMADALI T.` — given name, then the family initial. */
+  maskedName: z.string(),
+})
+export type RecipientLookup = z.infer<typeof recipientLookupSchema>
+
+/**
+ * Masks a name for the confirmation screen (FR-4.6, §11.4).
+ *
+ * Lives in `shared` because both the API and the USSD adapter render it, and a
+ * second implementation would drift — one of them would eventually show a
+ * full surname.
+ */
+export function maskRecipientName(firstName: string, lastName: string): string {
+  const given = firstName.trim().toUpperCase()
+  const initial = firstCodePointUpper(lastName.trim())
+
+  if (!initial) return given
+  if (!given) return `${initial}.`
+  return `${given} ${initial}.`
+}
+
+/**
+ * The first *code point*, uppercased, and only one of it.
+ *
+ * Two real bugs lived in the one-line version this replaces.
+ *
+ * `charAt(0)` returns a UTF-16 code unit, not a character. `nameSchema`
+ * accepts astral letters because they match the Unicode letter class, so a
+ * surname starting above the BMP put an unpaired surrogate on the wire — an
+ * ill-formed Unicode string in a production JSON body.
+ *
+ * And `toUpperCase` is not length-preserving: the German sharp s uppercases to
+ * two letters, so the mask published twice what it promised. Taking the first
+ * code point *after* uppercasing fixes both at once.
+ */
+function firstCodePointUpper(value: string): string {
+  const [first] = [...value]
+  if (!first) return ""
+  const [upper] = [...first.toUpperCase()]
+  return upper ?? ""
+}

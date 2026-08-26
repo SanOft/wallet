@@ -9,11 +9,12 @@
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run --coverage",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx --env-file-if-exists=.env prisma/seed.ts"
+    "db:seed": "tsx --env-file-if-exists=.env prisma/seed.ts",
+    "db:reconcile": "tsx --env-file-if-exists=.env src/jobs/reconcile.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "~7.9.1",
@@ -32,6 +33,7 @@
     "@types/node": "^22.20.1",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
+    "@vitest/coverage-v8": "4.1.11",
     "prisma": "~7.9.1",
     "supertest": "^7.2.2",
     "tsx": "^4.23.12",

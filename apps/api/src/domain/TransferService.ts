@@ -4,6 +4,9 @@ import {
   API_ERROR_STATUS,
   type ApiErrorCode,
   CHANNEL_LIMITS,
+  DEMO_TOPUP_AMOUNT,
+  DEMO_TOPUP_MAX_PER_DAY,
+  DEMO_TOPUP_WINDOW_HOURS,
   type FieldIssue,
   NEW_RECIPIENT_LIMIT,
   NEW_RECIPIENT_WINDOW_HOURS,
@@ -273,16 +276,44 @@ export class TransferService {
 
     if (sender.balance < input.amount) throw new InsufficientFundsError()
 
-    const senderBalanceAfter = sender.balance - input.amount
-    const recipientBalanceAfter = recipient.balance + input.amount
+    return this.#moveMoney(tx, {
+      from: sender,
+      to: recipient,
+      input,
+      type,
+      requestHash,
+      now,
+    })
+  }
+
+  /**
+   * Writes one transfer and its ledger pair. Shared by P2P and TOPUP, so a demo
+   * top-up is an ordinary transfer from the treasury and nothing about
+   * double-entry is special-cased for it (FR-10.2).
+   */
+  async #moveMoney(
+    tx: TransactionClient,
+    move: {
+      readonly from: { readonly id: string; readonly balance: bigint }
+      readonly to: { readonly id: string; readonly balance: bigint }
+      readonly input: TransferInput
+      readonly type: "P2P" | "TOPUP"
+      readonly requestHash: string
+      readonly now: Date
+    },
+  ): Promise<TransferResult> {
+    const { from, to, input, type, requestHash, now } = move
+
+    const senderBalanceAfter = from.balance - input.amount
+    const recipientBalanceAfter = to.balance + input.amount
 
     // PENDING, then the entries, then COMPLETED — the order §11.4 draws. The
     // deferred trigger checks the whole shape at COMMIT, so a transfer that
     // never reaches COMPLETED, or reaches it without its pair, aborts.
     const transfer = await tx.transfer.create({
       data: {
-        fromAccountId: sender.id,
-        toAccountId: recipient.id,
+        fromAccountId: from.id,
+        toAccountId: to.id,
         amount: input.amount,
         type,
         channel: input.channel,
@@ -294,13 +325,13 @@ export class TransferService {
 
     await new LedgerRepository(tx).append([
       {
-        accountId: sender.id,
+        accountId: from.id,
         transferId: transfer.id,
         amount: -input.amount,
         balanceAfter: senderBalanceAfter,
       },
       {
-        accountId: recipient.id,
+        accountId: to.id,
         transferId: transfer.id,
         amount: input.amount,
         balanceAfter: recipientBalanceAfter,
@@ -309,11 +340,8 @@ export class TransferService {
 
     // The snapshot (FR-3.2, I-4). The ledger is the truth; this is the cached
     // answer, and reconciliation compares the two.
-    await tx.account.update({ where: { id: sender.id }, data: { balance: senderBalanceAfter } })
-    await tx.account.update({
-      where: { id: recipient.id },
-      data: { balance: recipientBalanceAfter },
-    })
+    await tx.account.update({ where: { id: from.id }, data: { balance: senderBalanceAfter } })
+    await tx.account.update({ where: { id: to.id }, data: { balance: recipientBalanceAfter } })
 
     const completed = await tx.transfer.update({
       where: { id: transfer.id },
@@ -355,6 +383,138 @@ export class TransferService {
   }
 
   /**
+   * Demo top-up (FR-10).
+   *
+   * Deliberately the same machinery as a P2P transfer: the treasury is the
+   * sender, the ledger pair is written the same way, and `sum(ledger) = 0`
+   * holds because the money comes from the mint rather than from nowhere
+   * (§9.4). If this had its own write path, the invariant would depend on two
+   * implementations agreeing forever.
+   *
+   * The FR-6 limits do not apply — they govern what a *user* may send, and the
+   * treasury is not a user. FR-10.3's three-per-day cap is what governs this.
+   */
+  async topUp(userId: string, idempotencyKey: string): Promise<TransferResult> {
+    const input: TransferInput = {
+      senderUserId: userId,
+      recipientPhone: "",
+      amount: DEMO_TOPUP_AMOUNT,
+      idempotencyKey,
+      channel: "WEB",
+      type: "TOPUP",
+    }
+    const requestHash = hashTransferRequest(input)
+
+    const replay = await this.#replay(input, requestHash)
+    if (replay) return this.#settle(replay)
+
+    let lastConflict: unknown
+    for (let attempt = 1; attempt <= SERIALIZABLE_RETRIES; attempt++) {
+      try {
+        return await this.#prisma.$transaction(
+          async (tx) => {
+            const now = this.#now()
+
+            /**
+             * Every top-up in the system debits the same treasury row, which
+             * under Serializable makes it a global conflict point rather than
+             * a hot row: twelve different users each doing their first-ever
+             * top-up concurrently saw eight of them abort with P2034 and
+             * surface as INTERNAL. The retry ladder was tuned for P2P, where
+             * the contended account is one recipient among many; here it is
+             * every request.
+             *
+             * A transaction-scoped advisory lock turns that into a queue.
+             * Callers wait for their turn and then commit, instead of racing,
+             * losing, and being told the technical failure is theirs. It is
+             * released automatically at COMMIT or ROLLBACK, so a crash cannot
+             * strand it.
+             */
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('wallet:treasury'))`
+
+            const treasury = await tx.account.findFirst({
+              where: { type: "TREASURY", currency: "UZS" },
+              select: { id: true, balance: true },
+            })
+            const account = await tx.account.findFirst({
+              where: { userId, currency: "UZS", type: "USER" },
+              select: { id: true, balance: true },
+            })
+            // No treasury means the seed never ran; that is an operator fault,
+            // not something to report as a user error.
+            if (!treasury) throw new Error("treasury account is missing; run the seed")
+            if (!account) throw new RecipientNotFoundError()
+
+            // FR-10.3. Counts COMPLETED top-ups only: a refused one moved
+            // nothing and must not spend an allowance.
+            const recent = await tx.transfer.count({
+              where: {
+                toAccountId: account.id,
+                type: "TOPUP",
+                status: "COMPLETED",
+                createdAt: {
+                  gte: new Date(now.getTime() - DEMO_TOPUP_WINDOW_HOURS * 60 * 60 * 1000),
+                },
+              },
+            })
+            if (recent >= DEMO_TOPUP_MAX_PER_DAY) {
+              throw new LimitExceededError([{ path: ["topup"], code: "limit.daily" }])
+            }
+
+            return this.#moveMoney(tx, {
+              from: treasury,
+              to: account,
+              input,
+              type: "TOPUP",
+              requestHash,
+              now,
+            })
+          },
+          /**
+           * Read Committed, deliberately, and it is not a weakening.
+           *
+           * The advisory lock above is mutual exclusion: only one top-up runs
+           * at a time, so there is no concurrent writer for an isolation level
+           * to protect against. Serializable here was strictly worse — its
+           * snapshot is taken when the transaction's first statement runs,
+           * which is *before* the lock is granted, so every queued caller woke
+           * with a stale snapshot and was aborted by SSI at COMMIT. The lock
+           * and the optimistic detector do not compose.
+           *
+           * What FR-4.3's Serializable requirement protects is two transfers
+           * racing on one user's balance. That race cannot arise on this path:
+           * the treasury is allowed to go negative (§9.4), so there is no
+           * balance constraint to lose, and the writer is serialized anyway.
+           * The ledger invariants are enforced by the deferred triggers, which
+           * are isolation-independent.
+           */
+          { isolationLevel: "ReadCommitted" },
+        )
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const settled = await this.#replay(input, requestHash)
+          if (settled) return this.#settle(settled)
+          throw new IdempotencyConflictError()
+        }
+        // The same treatment `execute` gives a refusal, and for the same
+        // reasons. Leaving it out meant a refused top-up wrote no FAILED row
+        // (FR-4.8), stored no outcome (FR-4.4), and left the key live — so the
+        // very same key minted a fresh 1 000 000 UZS a day later, which §12.2
+        // says is a 409.
+        if (error instanceof DomainError) {
+          await this.#recordFailure(input, requestHash, error)
+          throw error
+        }
+        if (!isSerializationFailure(error)) throw error
+        lastConflict = error
+        if (attempt < SERIALIZABLE_RETRIES) await sleep(backoffMs(attempt))
+      }
+    }
+
+    throw lastConflict
+  }
+
+  /**
    * Records a refused transfer as a FAILED row (§11.5, FR-4.8).
    *
    * In its own transaction, because the one that raised the error has already
@@ -371,14 +531,30 @@ export class TransferService {
 
     try {
       await this.#prisma.$transaction(async (tx) => {
-        const sender = await tx.account.findFirst({
+        // A top-up runs treasury -> caller, so its parties are the mirror of a
+        // P2P's and `recipientPhone` is empty. Resolving them the same way
+        // would silently record nothing.
+        const isTopUp = (input.type ?? "P2P") === "TOPUP"
+
+        const own = await tx.account.findFirst({
           where: { userId: input.senderUserId, currency: "UZS", type: "USER" },
           select: { id: true },
         })
-        const recipient = await tx.account.findFirst({
-          where: { user: { phone: input.recipientPhone }, currency: "UZS", type: "USER" },
-          select: { id: true },
-        })
+        const treasury = isTopUp
+          ? await tx.account.findFirst({
+              where: { type: "TREASURY", currency: "UZS" },
+              select: { id: true },
+            })
+          : null
+        const counterparty = isTopUp
+          ? own
+          : await tx.account.findFirst({
+              where: { user: { phone: input.recipientPhone }, currency: "UZS", type: "USER" },
+              select: { id: true },
+            })
+
+        const sender = isTopUp ? treasury : own
+        const recipient = counterparty
         // Nothing to attribute the attempt to. A refusal we cannot place in
         // anyone's history is better dropped than invented.
         if (!sender || !recipient || sender.id === recipient.id) return

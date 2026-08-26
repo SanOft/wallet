@@ -1,7 +1,9 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    // Node ^22 and >=24 both implement ES2024; the lib was simply behind the
+    // runtimes the engines field already requires.
+    "lib": ["ES2024"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
 
