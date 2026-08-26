@@ -31,6 +31,9 @@ jobs:
       # Ephemeral service container on localhost; these credentials exist for
       # the length of one job and reach nothing outside it.
       DATABASE_URL: postgresql://wallet:wallet@localhost:5432/wallet?schema=public
+      # The API refuses to boot without one (NFR-1.9), so the integration tests
+      # need it too. Ephemeral and job-scoped, like the database credentials.
+      JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
 
     steps:
       - uses: actions/checkout@v4

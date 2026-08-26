@@ -292,7 +292,7 @@ describe.skipIf(!hasDatabase)("login (FR-2.2, S-5)", () => {
     // gives up without spending the time made the treasury — the mint for all
     // demo funds — answer 3.8x faster than any other number, in one request.
     const { app } = buildApp(prisma, { ...process.env })
-    await seed()
+    await seed(prisma)
 
     const { a, b, ratio } = await timingRatio(
       app,

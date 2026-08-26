@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url"
+import type { PrismaClient } from "@prisma/client"
 import { loadEnv } from "../src/config/env.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
 
@@ -19,9 +20,13 @@ const SYSTEM_PHONE = "+998000000000"
 const SYSTEM_PASSWORD_HASH = "!system-account-cannot-authenticate!"
 const TREASURY_CURRENCY = "UZS"
 
-export async function seed(): Promise<{ userId: string; accountId: string }> {
-  const env = loadEnv()
-  const prisma = createPrismaClient(env)
+export async function seed(
+  injected?: PrismaClient,
+): Promise<{ userId: string; accountId: string }> {
+  // Seeding needs a connection string and nothing else. Reaching for the full
+  // environment would make this script refuse to run without a JWT secret it
+  // never uses — which is exactly how it failed in CI.
+  const prisma = injected ?? createPrismaClient(loadEnv())
 
   try {
     const system = await prisma.user.upsert({
@@ -51,7 +56,8 @@ export async function seed(): Promise<{ userId: string; accountId: string }> {
 
     return { userId: system.id, accountId: treasury.id }
   } finally {
-    await prisma.$disconnect()
+    // Only close what we opened; a caller's client is theirs to manage.
+    if (!injected) await prisma.$disconnect()
   }
 }
 
