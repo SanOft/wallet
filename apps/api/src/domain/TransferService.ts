@@ -4,6 +4,9 @@ import {
   API_ERROR_STATUS,
   type ApiErrorCode,
   CHANNEL_LIMITS,
+  DEMO_TOPUP_AMOUNT,
+  DEMO_TOPUP_MAX_PER_DAY,
+  DEMO_TOPUP_WINDOW_HOURS,
   type FieldIssue,
   NEW_RECIPIENT_LIMIT,
   NEW_RECIPIENT_WINDOW_HOURS,
@@ -273,16 +276,44 @@ export class TransferService {
 
     if (sender.balance < input.amount) throw new InsufficientFundsError()
 
-    const senderBalanceAfter = sender.balance - input.amount
-    const recipientBalanceAfter = recipient.balance + input.amount
+    return this.#moveMoney(tx, {
+      from: sender,
+      to: recipient,
+      input,
+      type,
+      requestHash,
+      now,
+    })
+  }
+
+  /**
+   * Writes one transfer and its ledger pair. Shared by P2P and TOPUP, so a demo
+   * top-up is an ordinary transfer from the treasury and nothing about
+   * double-entry is special-cased for it (FR-10.2).
+   */
+  async #moveMoney(
+    tx: TransactionClient,
+    move: {
+      readonly from: { readonly id: string; readonly balance: bigint }
+      readonly to: { readonly id: string; readonly balance: bigint }
+      readonly input: TransferInput
+      readonly type: "P2P" | "TOPUP"
+      readonly requestHash: string
+      readonly now: Date
+    },
+  ): Promise<TransferResult> {
+    const { from, to, input, type, requestHash, now } = move
+
+    const senderBalanceAfter = from.balance - input.amount
+    const recipientBalanceAfter = to.balance + input.amount
 
     // PENDING, then the entries, then COMPLETED — the order §11.4 draws. The
     // deferred trigger checks the whole shape at COMMIT, so a transfer that
     // never reaches COMPLETED, or reaches it without its pair, aborts.
     const transfer = await tx.transfer.create({
       data: {
-        fromAccountId: sender.id,
-        toAccountId: recipient.id,
+        fromAccountId: from.id,
+        toAccountId: to.id,
         amount: input.amount,
         type,
         channel: input.channel,
@@ -294,13 +325,13 @@ export class TransferService {
 
     await new LedgerRepository(tx).append([
       {
-        accountId: sender.id,
+        accountId: from.id,
         transferId: transfer.id,
         amount: -input.amount,
         balanceAfter: senderBalanceAfter,
       },
       {
-        accountId: recipient.id,
+        accountId: to.id,
         transferId: transfer.id,
         amount: input.amount,
         balanceAfter: recipientBalanceAfter,
@@ -309,11 +340,8 @@ export class TransferService {
 
     // The snapshot (FR-3.2, I-4). The ledger is the truth; this is the cached
     // answer, and reconciliation compares the two.
-    await tx.account.update({ where: { id: sender.id }, data: { balance: senderBalanceAfter } })
-    await tx.account.update({
-      where: { id: recipient.id },
-      data: { balance: recipientBalanceAfter },
-    })
+    await tx.account.update({ where: { id: from.id }, data: { balance: senderBalanceAfter } })
+    await tx.account.update({ where: { id: to.id }, data: { balance: recipientBalanceAfter } })
 
     const completed = await tx.transfer.update({
       where: { id: transfer.id },
@@ -352,6 +380,97 @@ export class TransferService {
     })
 
     return result
+  }
+
+  /**
+   * Demo top-up (FR-10).
+   *
+   * Deliberately the same machinery as a P2P transfer: the treasury is the
+   * sender, the ledger pair is written the same way, and `sum(ledger) = 0`
+   * holds because the money comes from the mint rather than from nowhere
+   * (§9.4). If this had its own write path, the invariant would depend on two
+   * implementations agreeing forever.
+   *
+   * The FR-6 limits do not apply — they govern what a *user* may send, and the
+   * treasury is not a user. FR-10.3's three-per-day cap is what governs this.
+   */
+  async topUp(userId: string, idempotencyKey: string): Promise<TransferResult> {
+    const input: TransferInput = {
+      senderUserId: userId,
+      recipientPhone: "",
+      amount: DEMO_TOPUP_AMOUNT,
+      idempotencyKey,
+      channel: "WEB",
+      type: "TOPUP",
+    }
+    const requestHash = hashTransferRequest(input)
+
+    const replay = await this.#replay(input, requestHash)
+    if (replay) return this.#settle(replay)
+
+    let lastConflict: unknown
+    for (let attempt = 1; attempt <= SERIALIZABLE_RETRIES; attempt++) {
+      try {
+        return await this.#prisma.$transaction(
+          async (tx) => {
+            const now = this.#now()
+
+            const treasury = await tx.account.findFirst({
+              where: { type: "TREASURY", currency: "UZS" },
+              select: { id: true, balance: true },
+            })
+            const account = await tx.account.findFirst({
+              where: { userId, currency: "UZS", type: "USER" },
+              select: { id: true, balance: true },
+            })
+            // No treasury means the seed never ran; that is an operator fault,
+            // not something to report as a user error.
+            if (!treasury) throw new Error("treasury account is missing; run the seed")
+            if (!account) throw new RecipientNotFoundError()
+
+            // FR-10.3. Counts COMPLETED top-ups only: a refused one moved
+            // nothing and must not spend an allowance.
+            const recent = await tx.transfer.count({
+              where: {
+                toAccountId: account.id,
+                type: "TOPUP",
+                status: "COMPLETED",
+                createdAt: {
+                  gte: new Date(now.getTime() - DEMO_TOPUP_WINDOW_HOURS * 60 * 60 * 1000),
+                },
+              },
+            })
+            if (recent >= DEMO_TOPUP_MAX_PER_DAY) {
+              throw new LimitExceededError([{ path: ["topup"], code: "limit.daily" }])
+            }
+
+            return this.#moveMoney(tx, {
+              from: treasury,
+              to: account,
+              input,
+              type: "TOPUP",
+              requestHash,
+              now,
+            })
+          },
+          { isolationLevel: "Serializable" },
+        )
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const settled = await this.#replay(input, requestHash)
+          if (settled) return this.#settle(settled)
+          throw new IdempotencyConflictError()
+        }
+        if (error instanceof DomainError) {
+          throw error
+        }
+        if (!isSerializationFailure(error)) throw error
+        lastConflict = error
+        if (attempt < SERIALIZABLE_RETRIES) await sleep(backoffMs(attempt))
+      }
+    }
+
+    throw lastConflict
   }
 
   /**

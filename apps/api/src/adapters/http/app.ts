@@ -8,8 +8,10 @@ import type { TokenService } from "../../infra/jwt.js"
 import { type Logger, serializeError, serializeRequest } from "../../infra/logger.js"
 import { createErrorHandler, notFoundHandler } from "./middleware/errorHandler.js"
 import { requestId } from "./middleware/requestId.js"
+import { accountRouter } from "./routes/accounts.js"
 import { authRouter } from "./routes/auth.js"
 import { healthRouter } from "./routes/health.js"
+import { recipientRouter } from "./routes/recipients.js"
 import { transferRouter } from "./routes/transfers.js"
 
 export interface AppDependencies {
@@ -85,6 +87,8 @@ export function createApp({ prisma, log, env, auth, tokens, transfers }: AppDepe
   app.use(healthRouter(prisma))
   app.use(authRouter({ auth, tokens, env }))
   app.use(transferRouter({ transfers, tokens }))
+  app.use(accountRouter({ prisma, transfers, tokens }))
+  app.use(recipientRouter({ prisma, tokens }))
 
   app.use(notFoundHandler)
 

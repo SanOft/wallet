@@ -81,6 +81,13 @@ export const VELOCITY_WINDOW_MINUTES = 5
 /** FR-6.3: more than this many transfers inside the window blocks. */
 export const VELOCITY_MAX_TRANSFERS = 5
 
+/** FR-10.1: one demo top-up is 1 000 000 UZS. */
+export const DEMO_TOPUP_AMOUNT = 100_000_000n
+
+/** FR-10.3: at most three top-ups in 24 hours, to curb abuse. */
+export const DEMO_TOPUP_MAX_PER_DAY = 3
+export const DEMO_TOPUP_WINDOW_HOURS = 24
+
 const CANONICAL_MINOR_RE = /^(0|[1-9]\d*)$/
 
 export const moneySchema = z

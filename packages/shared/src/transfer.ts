@@ -62,3 +62,53 @@ export const idempotencyKeySchema = z
   // successful transfer and then `IDEMPOTENCY_CONFLICT` forever.
   .uuidv4({ error: "field.required" })
   .describe("Idempotency-Key header")
+
+/**
+ * `GET /api/accounts` (FR-3, §12.1). One UZS account in the MVP, but the shape
+ * is a list so adding a currency in v2 is not a breaking change (§21 Q-3).
+ */
+export const accountSchema = z.object({
+  id: z.string(),
+  currency: z.string(),
+  /** Minor units as a string (§12.2). */
+  balance: z.string(),
+  type: z.enum(["USER", "TREASURY"]),
+})
+
+export const accountsResponseSchema = z.object({
+  accounts: z.array(accountSchema),
+  user: z.object({
+    id: z.string(),
+    phone: z.string(),
+    firstName: z.string(),
+    lastName: z.string(),
+  }),
+})
+export type AccountsResponse = z.infer<typeof accountsResponseSchema>
+
+/**
+ * `GET /api/recipients/lookup` (FR-4.9).
+ *
+ * The name is masked before it leaves the server, so the response cannot be
+ * used to harvest full names by walking a number range. Only an exact,
+ * complete-number match returns anything at all.
+ */
+export const recipientLookupSchema = z.object({
+  phone: z.string(),
+  /** `MUHAMMADALI T.` — given name, then the family initial. */
+  maskedName: z.string(),
+})
+export type RecipientLookup = z.infer<typeof recipientLookupSchema>
+
+/**
+ * Masks a name for the confirmation screen (FR-4.6, §11.4).
+ *
+ * Lives in `shared` because both the API and the USSD adapter render it, and a
+ * second implementation would drift — one of them would eventually show a
+ * full surname.
+ */
+export function maskRecipientName(firstName: string, lastName: string): string {
+  const given = firstName.trim().toUpperCase()
+  const initial = lastName.trim().charAt(0).toUpperCase()
+  return initial ? `${given} ${initial}.` : given
+}
