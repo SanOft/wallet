@@ -122,6 +122,7 @@ Every requirement is numbered and verifiable. Acceptance criteria are written in
 - **FR-2.5** The JWT algorithm is hard-coded: `HS256`. `alg:none` and algorithm confusion are rejected.
 - **FR-2.6** **Rotation:** on every refresh, the old token is invalidated and a new one is issued.
 - **FR-2.7** **Reuse detection:** if a previously used refresh token comes back — the entire token family is revoked and all devices are signed out.
+  - **Bound on the window.** Revocation reaches refresh tokens immediately; already-issued *access* tokens are self-contained and keep working until they expire, so a compromised session survives for up to the FR-2.4 lifetime (15 minutes) after detection. This is the price of having no revocation list, and it is stated here rather than left in a source comment. Endpoints that move money get a `tokensValidAfter` check at B3, which closes the window for exactly the operations where fifteen minutes matters.
 - **FR-2.8** **Step-up:** any single transfer above 1,000,000 UZS requires re-entering the password on the confirmation screen.
 
 ## FR-3. Account and balance
@@ -712,7 +713,7 @@ stateDiagram-v2
 | POST   | `/api/auth/register`                             | Registration                                         | —                     | FR-1           |
 | POST   | `/api/auth/login`                                | Login                                                | —                     | FR-2           |
 | POST   | `/api/auth/refresh`                              | Token refresh (rotation)                             | cookie                | FR-2.6         |
-| POST   | `/api/auth/logout`                               | Logout (revokes the current family)                  | ✅                    | FR-2           |
+| POST   | `/api/auth/logout`                               | Logout (revokes the current family)                  | cookie                | FR-2           |
 | GET    | `/api/me`                                        | Current user                                         | ✅                    | —              |
 | PUT    | `/api/me/pin`                                    | Set/change the USSD PIN (with password confirmation) | ✅                    | FR-1.6, FR-9.5 |
 | GET    | `/api/accounts`                                  | Account and balance                                  | ✅                    | FR-3           |
@@ -754,8 +755,9 @@ Field codes appear inside `VALIDATION_ERROR` (which field failed) and inside `LI
 | `VALIDATION_ERROR`         | 400  | Zod rejected the input (fields in `details`) | Shown under the field                                                                                          |
 | `REGISTRATION_FAILED`      | 400  | Registration rejected (reason hidden)        | "Registration failed. Check your details." (original: "Ro'yxatdan o'tib bo'lmadi. Ma'lumotlarni tekshiring.")  |
 | `AUTH_INVALID_CREDENTIALS` | 401  | Login failed (reason hidden)                 | "Login failed. Incorrect number or password." (original: "Kirish amalga oshmadi. Raqam yoki parol noto'g'ri.") |
-| `AUTH_TOKEN_EXPIRED`       | 401  | Access token expired                         | (invisible — automatic refresh)                                                                                |
+| `AUTH_TOKEN_EXPIRED`       | 401  | Access token expired — the client refreshes and retries. **Never returned by `/auth/refresh` itself**: telling a client whose refresh failed to refresh is a loop | (invisible — automatic refresh)                                                                |
 | `AUTH_REFRESH_REUSED`      | 401  | Reuse detection fired                        | "Please sign in again for security reasons."                                                                   |
+| `AUTH_REFRESH_INVALID`     | 401  | The refresh credential is unknown, revoked or expired | "Your session has ended. Please sign in."                                                             |
 | `AUTH_LOCKED`              | 429  | Lockout active (`Retry-After` header)        | "Too many attempts. Try again in X minutes."                                                                   |
 | `RATE_LIMITED`             | 429  | General rate limit / lookup limit            | "Too many requests. Please wait a moment."                                                                     |
 | `NOT_FOUND`                | 404  | No route matches the path, or the method is not allowed on it | "This page is no longer available."                                           |
@@ -1005,7 +1007,7 @@ The real test of a fintech UI is the unhappy paths. Defined behavior for each:
 | ------ | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | **B0** | Skeleton                  | Express + TS + pino + `/health`; error middleware (12.3 format); Prisma + Neon connection; `requestId`                                  | `/health` returns 200 with a DB check; error format test        |
 | **B1** | Schema and migration      | The 7 tables from 9.1; `CHECK` constraints (I-5, treasury exception); seed: SYSTEM user + TREASURY account                              | `prisma migrate` passes on a clean database; seed is idempotent |
-| **B2** | Auth                      | Register, login (timing-safe), lockout (FR-2.3), JWT + refresh rotation/reuse (FR-2.6/2.7), logout, `/me`, PIN setup                    | FR-1, FR-2 integration tests; Section 18 S-4, S-5 green         |
+| **B2** | Auth                      | Register, login (timing-safe), JWT + refresh rotation/reuse (FR-2.6/2.7), logout, `/me`. **Deferred to September:** lockout (FR-2.3), step-up (FR-2.8) and PIN setup (FR-1.6) — see `docs/runbook.md` §4. `AuthAttempt` rows are written from day 3 so the lockout counter has history to read when it lands | FR-1, FR-2 integration tests; Section 18 S-4, S-5 green         |
 | **B3** | Domain: ledger + transfer | `TransferService` (channel-agnostic!), idempotency, Serializable + P2034 retry, limits (FR-6.1–6.3), lookup + rate limit, topup (FR-10) | S-1, S-2, S-3 green; I-1…I-6 invariant tests                    |
 | **B4** | History and rates         | Cursor pagination, filters; CBU cache (FR-7); notification records (FR-6.4)                                                             | FR-5 tests; degradation test with CBU down                      |
 | **B5** | Hardening                 | helmet, CORS allowlist, rate limits, `yarn npm audit` clean; log audit (NFR-5.2)                                                            | Security checklist (17.3) complete                              |
@@ -1100,7 +1102,7 @@ The primary channel of money loss is deceiving the user. The controls live at th
 | S-2 | 2 parallel transfers, balance covers only one → one COMPLETED, one FAILED, balance ≥ 0                                           | FR-4.3, I-5  |
 | S-3 | Transfer from someone else's account / request for someone else's history → 403/404, no data leaks                               | FR-4.5       |
 | S-4 | Used refresh token replayed → entire family revoked, subsequent requests get 401                                                 | FR-2.7       |
-| S-5 | Login response for a non-existent number ≡ response for an existing number + wrong password (text + status; timing delta < 50ms) | FR-2.2       |
+| S-5 | Login response for a non-existent number ≡ response for an existing number + wrong password (text + status; **timing ratio max/min < 1.5**, measured over ≥5 samples) | FR-2.2       |
 | S-6 | Double-tapping "Send" in the wizard → one request (UI layer) + one transfer (server layer)                                       | FR-4.8, 13.5 |
 | S-7 | `sum(ledger) = 0` after every test suite (global invariant check)                                                                | I-1          |
 | S-8 | USSD: full transfer session; 3 wrong PINs → 1h block                                                                             | FR-9         |

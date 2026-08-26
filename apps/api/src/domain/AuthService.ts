@@ -51,6 +51,13 @@ interface UserRow {
   readonly lastName: string
 }
 
+/** Prisma signals a unique-constraint violation with P2002. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002"
+  )
+}
+
 function toPublicUser(user: UserRow): PublicUser {
   return {
     id: user.id,
@@ -102,10 +109,17 @@ export class AuthService {
 
         return created
       })
-    } catch {
-      // FR-1.5: every rejection looks the same from outside, whether the number
-      // was taken or the write failed for another reason.
-      throw new RegistrationFailedError()
+    } catch (error) {
+      // FR-1.5 covers a *taken number*: that rejection is deliberately generic
+      // so an attacker cannot walk a range and learn who banks here.
+      //
+      // It does not cover a database outage. Reporting one as 400 "check your
+      // details" tells the user their input is wrong, marks the failure
+      // non-retryable under §12.3, and leaves no error-level log line — the
+      // same retryability inversion the error handler exists to prevent, in
+      // the opposite direction.
+      if (isUniqueViolation(error)) throw new RegistrationFailedError()
+      throw error
     }
 
     return this.#issueSession(user, randomUUID())
@@ -128,16 +142,15 @@ export class AuthService {
     const hash = user?.passwordHash ?? (await dummyHash())
     const passwordMatches = await verifySecret(hash, input.password)
 
-    if (!user || !passwordMatches) {
-      // Recorded only when we know who to record it against; an attempt on a
-      // number that does not exist has no row to hang off (§9.2).
-      if (user) {
-        await this.#prisma.authAttempt.create({ data: { userId: user.id, succeeded: false } })
-      }
-      throw new InvalidCredentialsError()
-    }
+    // Written unconditionally, with a null subject when the number is unknown
+    // (§11.2 draws it that way). Recording only the attempts that match a user
+    // made a registered number cost one extra INSERT, which was measurable from
+    // outside as ~6ms and classified numbers at 80% accuracy.
+    await this.#prisma.authAttempt.create({
+      data: { userId: user?.id ?? null, succeeded: Boolean(user) && passwordMatches },
+    })
 
-    await this.#prisma.authAttempt.create({ data: { userId: user.id, succeeded: true } })
+    if (!user || !passwordMatches) throw new InvalidCredentialsError()
 
     // A fresh family: this is a new device as far as we can tell (§9.2).
     return this.#issueSession(user, randomUUID())
@@ -154,35 +167,63 @@ export class AuthService {
     const tokenHash = hashRefreshToken(rawToken)
     const now = this.#now()
 
-    const stored = await this.#prisma.refreshToken.findUnique({
-      where: { tokenHash },
-      select: {
-        id: true,
-        familyId: true,
-        usedAt: true,
-        revokedAt: true,
-        expiresAt: true,
-        user: { select: { id: true, phone: true, firstName: true, lastName: true } },
-      },
+    /**
+     * The claim has to be atomic. Reading `usedAt` and then writing it is a
+     * lost update: two replays of the same stolen token that arrive together
+     * both read `null`, both write, and both get a working session while reuse
+     * detection never fires. Sequential replay is the interleaving that is easy
+     * to imagine and the one an attacker has no reason to choose.
+     *
+     * `updateMany` with `usedAt: null` in the predicate makes the database the
+     * arbiter: under READ COMMITTED the second writer blocks, re-evaluates the
+     * predicate against the committed row, and matches nothing.
+     */
+    const outcome = await this.#prisma.$transaction(async (tx) => {
+      const stored = await tx.refreshToken.findUnique({
+        where: { tokenHash },
+        select: {
+          id: true,
+          familyId: true,
+          user: { select: { id: true, phone: true, firstName: true, lastName: true } },
+        },
+      })
+
+      if (!stored) return { kind: "invalid" as const }
+
+      const claimed = await tx.refreshToken.updateMany({
+        where: { id: stored.id, usedAt: null, revokedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      })
+
+      if (claimed.count === 0) {
+        // The claim lost. Re-read to learn why: an already-used token is a
+        // reuse and costs the family; a revoked or expired one is merely dead.
+        const current = await tx.refreshToken.findUnique({
+          where: { id: stored.id },
+          select: { usedAt: true },
+        })
+        return current?.usedAt
+          ? { kind: "reused" as const, familyId: stored.familyId }
+          : { kind: "invalid" as const }
+      }
+
+      return {
+        kind: "ok" as const,
+        session: await this.#issueSession(stored.user, stored.familyId, tx),
+      }
     })
 
-    if (!stored) throw new RefreshTokenInvalidError()
-
-    if (stored.usedAt !== null) {
-      await this.#revokeFamily(stored.familyId, now)
+    if (outcome.kind === "reused") {
+      // Deliberately after the transaction commits. Revoking inside it and then
+      // throwing would roll the revocation back, which is the failure mode that
+      // makes a "we handled it" comment quietly false.
+      await this.#revokeFamily(outcome.familyId, now)
       throw new RefreshTokenReusedError()
     }
 
-    if (stored.revokedAt !== null || stored.expiresAt <= now) {
-      throw new RefreshTokenInvalidError()
-    }
+    if (outcome.kind === "invalid") throw new RefreshTokenInvalidError()
 
-    // Rotation and issuance are one transaction: a crash between them would
-    // either strand the family or leave two live tokens in it.
-    return this.#prisma.$transaction(async (tx) => {
-      await tx.refreshToken.update({ where: { id: stored.id }, data: { usedAt: now } })
-      return this.#issueSession(stored.user, stored.familyId, tx)
-    })
+    return outcome.session
   }
 
   /** Revokes the family this token belongs to, signing that device out. */

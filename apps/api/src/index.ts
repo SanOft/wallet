@@ -1,6 +1,7 @@
 import { createApp } from "./adapters/http/app.js"
 import { loadEnv } from "./config/env.js"
 import { AuthService } from "./domain/AuthService.js"
+import { warmDummyHash } from "./infra/crypto.js"
 import { createTokenService } from "./infra/jwt.js"
 import { createLogger } from "./infra/logger.js"
 import { createPrismaClient } from "./infra/prisma.js"
@@ -28,6 +29,10 @@ async function main(): Promise<void> {
     log.fatal({ err: reason }, "unhandled rejection; exiting")
     process.exit(1)
   })
+
+  // Pay the first argon2 cost at startup rather than on the first login for
+  // an unknown number, which would otherwise answer measurably slower.
+  await warmDummyHash()
 
   const tokens = createTokenService(env)
   const auth = new AuthService({ prisma, tokens })

@@ -44,9 +44,24 @@ export const registerRequestSchema = z.strictObject({
 })
 export type RegisterRequest = z.infer<typeof registerRequestSchema>
 
+/**
+ * Login checks that a password is *present*, not that it meets today's policy.
+ *
+ * Reusing `passwordSchema` here gives the login endpoint a third response shape
+ * — a per-field `password.too_short` — which contradicts FR-2.2's "the error
+ * response is always identical", and short-circuits before any hash work, so it
+ * is a free way to tell "reached the credential check" from "did not". It would
+ * also lock existing accounts out at login the day the minimum is raised, which
+ * is the wrong place to discover a policy change.
+ */
+export const loginPasswordSchema = z
+  .string()
+  .min(1, { error: "field.required" })
+  .max(PASSWORD_MAX_LENGTH, { error: "password.too_long" })
+
 export const loginRequestSchema = z.strictObject({
   phone: phoneField,
-  password: passwordSchema,
+  password: loginPasswordSchema,
 })
 export type LoginRequest = z.infer<typeof loginRequestSchema>
 

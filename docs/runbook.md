@@ -163,7 +163,7 @@ Every task carries: **ID · what · files · acceptance criteria**. Each day end
 | T-3.5 | Refresh: opaque token, SHA-256 hash in DB, `familyId` | `domain/AuthService.ts` | Raw token never stored |
 | T-3.6 | `POST /auth/refresh` — rotation + reuse detection | `domain/AuthService.ts` | **S-4** green |
 | T-3.7 | `GET /me`, `POST /auth/logout` | `adapters/http/routes/auth.ts` | Responses parsed through `publicUserSchema` |
-| T-3.8 | **Server validates its own responses** on every route | `adapters/http/respond.ts` | `passwordHash` provably never reaches the wire |
+| T-3.8 | **Server validates its own responses** on every route | `adapters/http/respond.ts` | `passwordHash` provably never reaches the wire — proved by handing the helper a full Prisma row, not by every call site happening to pass a narrowed one |
 
 **Outcome:** PR `feat/auth`. S-4, S-5 green.
 

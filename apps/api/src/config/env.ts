@@ -50,6 +50,9 @@ const envSchema = z.object({
 })
 
 /**
+ * NOT YET CONSUMED — the CORS middleware lands at B5 (day 6). It is validated
+ * here anyway so a deploy cannot reach that day without the value already set.
+ *
  * NFR-1.8 forbids a `*` allowlist. An empty one is the other way to get it
  * wrong: in production it either blocks the PWA outright or invites someone to
  * "unbreak" it with a wildcard. Development is allowed to omit it.

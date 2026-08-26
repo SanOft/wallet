@@ -179,11 +179,18 @@ model RefreshToken {
 /// survives for audit (§9.2, FR-2.3).
 model AuthAttempt {
   id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid
+  /// Null when the attempt named a number that is not registered.
+  ///
+  /// It has to be nullable, and the row has to be written either way: recording
+  /// only the attempts that match a user made login do one extra INSERT for a
+  /// registered number, which was measurable from outside as a ~6ms difference
+  /// and classified numbers at 80% accuracy — an enumeration oracle against
+  /// FR-2.2 and NFR-1.2. §11.2 draws this write unconditionally.
+  userId    String?  @db.Uuid
   succeeded Boolean
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@map("auth_attempts")

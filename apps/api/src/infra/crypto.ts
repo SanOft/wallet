@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto"
+import { createHash, randomBytes } from "node:crypto"
 import argon2 from "argon2"
 
 /**
@@ -30,6 +30,15 @@ export async function verifySecret(hash: string, plain: string): Promise<boolean
   try {
     return await argon2.verify(hash, plain)
   } catch {
+    /**
+     * Returning false here without doing the work is a louder oracle than the
+     * 500 this catch was written to avoid: the SYSTEM account is the only row
+     * whose hash is a sentinel, so a bare `return false` made
+     * `+998000000000` answer in 9ms against 34ms for every other number — a
+     * 3.8x separation visible in a single request, identifying the treasury
+     * (§9.4). Spend the time anyway.
+     */
+    await argon2.verify(await dummyHash(), plain).catch(() => false)
     return false
   }
 }
@@ -52,6 +61,16 @@ export function dummyHash(): Promise<string> {
 }
 
 /**
+ * Called once at startup. Without it the *first* unknown-number login after a
+ * cold start pays an extra full argon2 hash on top of the verify — a leak in
+ * the opposite direction, and Render's free tier makes cold starts routine
+ * (§20.3).
+ */
+export function warmDummyHash(): Promise<unknown> {
+  return dummyHash()
+}
+
+/**
  * Refresh tokens are opaque random values, not JWTs (§21 Q-5): revocation needs
  * the database anyway, so a signed token would add risk without adding
  * anything. 256 bits of entropy, base64url so it survives a cookie unescaped.
@@ -70,15 +89,4 @@ export function generateRefreshToken(): string {
  */
 export function hashRefreshToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url")
-}
-
-/**
- * Constant-time comparison for values that are already digests. Used where a
- * length-dependent early return would otherwise leak a prefix.
- */
-export function safeEqual(a: string, b: string): boolean {
-  const left = Buffer.from(a)
-  const right = Buffer.from(b)
-  if (left.length !== right.length) return false
-  return timingSafeEqual(left, right)
 }

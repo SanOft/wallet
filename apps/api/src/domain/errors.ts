@@ -60,10 +60,17 @@ export class InvalidCredentialsError extends DomainError {
   }
 }
 
-/** The refresh token is unknown, expired or already revoked. */
+/**
+ * The refresh credential is unknown, revoked or expired.
+ *
+ * A distinct code from `AUTH_TOKEN_EXPIRED` on purpose: §12.3 tells the client
+ * that one means "refresh and retry", and answering a *failed refresh* with it
+ * sends the client back into the call that just failed. This one means "sign in
+ * again", which is the only thing left to do.
+ */
 export class RefreshTokenInvalidError extends DomainError {
   constructor() {
-    super("AUTH_TOKEN_EXPIRED", "Refresh token is not valid")
+    super("AUTH_REFRESH_INVALID", "Refresh credential is not valid")
   }
 }
 
