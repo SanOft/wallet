@@ -10,11 +10,20 @@
 # defaults were kept in full. Verified after the change: a random base64 value
 # containing `+` and `/` is now reported.
 #
-# There is no allowlist here, deliberately. The two findings this history
-# genuinely contains — a placeholder in `apps/api/.env.example` and a test
-# constant in `apps/api/test/helpers.ts`, both from e3f6d6e and both since
-# removed — are accepted individually by fingerprint in
-# `.gitleaks-baseline.json`, which the CI step passes with `--baseline-path`.
+# There is no allowlist here, deliberately. Two problems exist in this history —
+# a long placeholder in `apps/api/.env.example` and a hard-coded test constant
+# in `apps/api/test/helpers.ts` — and both are fixed in the working tree: the
+# placeholder is empty and the helper generates a secret per run. They remain in
+# commits that cannot be rewritten, so they are accepted individually by
+# fingerprint in `.gitleaks-baseline.json`, which CI passes with
+# `--baseline-path`.
+#
+# A fingerprint is commit, file, rule and line. That makes it precise and it
+# makes it brittle in exactly one way worth writing down: rebasing or
+# squash-merging changes commit SHAs, so the baseline stops matching and CI
+# fails until it is regenerated. That is not a false alarm — it is the scanner
+# correctly reporting findings in commits it has not been told about — and the
+# fix is to regenerate the file, never to widen the exception.
 #
 # A path exception was tried first and rejected on evidence: scoping it to the
 # commit *and* the path still did not report a fresh secret appended to
