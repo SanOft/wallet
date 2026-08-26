@@ -1542,6 +1542,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@wallet/shared@workspace:packages/shared"
   dependencies:
+    "@vitest/coverage-v8": "npm:4.1.11"
     typescript: "npm:^7.0.2"
     vitest: "npm:^4.1.11"
     zod: "npm:^4.4.3"

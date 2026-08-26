@@ -26,6 +26,13 @@ export const transferRequestSchema = z.strictObject({
 })
 export type TransferRequest = z.infer<typeof transferRequestSchema>
 
+/**
+ * `POST /api/accounts/topup` takes nothing: FR-10.1 fixes the amount and the
+ * account comes from the token. Strict, so a client that thinks it chooses
+ * either is told rather than silently ignored.
+ */
+export const topUpRequestSchema = z.strictObject({})
+
 export const transferStatusSchema = z.enum(["PENDING", "COMPLETED", "FAILED"])
 export type TransferStatus = z.infer<typeof transferStatusSchema>
 
@@ -109,6 +116,30 @@ export type RecipientLookup = z.infer<typeof recipientLookupSchema>
  */
 export function maskRecipientName(firstName: string, lastName: string): string {
   const given = firstName.trim().toUpperCase()
-  const initial = lastName.trim().charAt(0).toUpperCase()
-  return initial ? `${given} ${initial}.` : given
+  const initial = firstCodePointUpper(lastName.trim())
+
+  if (!initial) return given
+  if (!given) return `${initial}.`
+  return `${given} ${initial}.`
+}
+
+/**
+ * The first *code point*, uppercased, and only one of it.
+ *
+ * Two real bugs lived in the one-line version this replaces.
+ *
+ * `charAt(0)` returns a UTF-16 code unit, not a character. `nameSchema`
+ * accepts astral letters because they match the Unicode letter class, so a
+ * surname starting above the BMP put an unpaired surrogate on the wire — an
+ * ill-formed Unicode string in a production JSON body.
+ *
+ * And `toUpperCase` is not length-preserving: the German sharp s uppercases to
+ * two letters, so the mask published twice what it promised. Taking the first
+ * code point *after* uppercasing fixes both at once.
+ */
+function firstCodePointUpper(value: string): string {
+  const [first] = [...value]
+  if (!first) return ""
+  const [upper] = [...first.toUpperCase()]
+  return upper ?? ""
 }

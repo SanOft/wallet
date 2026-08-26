@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client"
 import {
   accountsResponseSchema,
   idempotencyKeySchema,
+  topUpRequestSchema,
   transferResponseSchema,
 } from "@wallet/shared"
 import { Router } from "express"
@@ -71,6 +72,13 @@ export function accountRouter({ prisma, transfers, tokens }: AccountRouterDepend
     if (!key.success) {
       throw new ValidationError([{ path: ["Idempotency-Key"], code: "field.required" }])
     }
+
+    // The amount is fixed by FR-10.1 and the account comes from the token, so
+    // this endpoint takes nothing. It still refuses a body rather than
+    // ignoring one: every other inbound schema here is strict on the grounds
+    // that an unexpected field means the client and server disagree, and a
+    // client that believes it controls the top-up amount was getting a 201.
+    topUpRequestSchema.parse(req.body ?? {})
 
     const result = await transfers.topUp(userId, key.data)
     respond(res, 201, transferResponseSchema, toWire(result))

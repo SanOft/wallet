@@ -30,7 +30,11 @@ export interface BuiltApp {
  * pipeline rather than a bespoke one. The day 2 review found three defects that
  * survived precisely because every test assembled its own middleware stack.
  */
-export function buildApp(prisma: PrismaClient, envOverrides: NodeJS.ProcessEnv = {}): BuiltApp {
+export function buildApp(
+  prisma: PrismaClient,
+  envOverrides: NodeJS.ProcessEnv = {},
+  now?: () => number,
+): BuiltApp {
   const lines: string[] = []
   const env = testEnv(envOverrides)
   const log = createLogger(env, {
@@ -43,7 +47,7 @@ export function buildApp(prisma: PrismaClient, envOverrides: NodeJS.ProcessEnv =
   const transfers = new TransferService({ prisma })
 
   return {
-    app: createApp({ prisma, log, env, auth, tokens, transfers }),
+    app: createApp({ prisma, log, env, auth, tokens, transfers, ...(now ? { now } : {}) }),
     logText: () => lines.join(""),
   }
 }

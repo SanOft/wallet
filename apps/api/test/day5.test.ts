@@ -116,6 +116,57 @@ describe.skipIf(!hasDatabase)("day 5 — top-up, accounts and lookup", () => {
       expect(topups).toBe(1)
     })
 
+    it("refuses a body, rather than ignoring one", async () => {
+      // The amount is fixed by FR-10.1 and the account comes from the token, so
+      // a client sending either believes something untrue. It used to get a 201.
+      const user = await newUser()
+      const res = await request(user.app)
+        .post("/api/accounts/topup")
+        .set("authorization", `Bearer ${user.token}`)
+        .set("idempotency-key", randomUUID())
+        .send({ amount: "999999999", accountId: "somebody-else" })
+
+      expect(res.status).toBe(400)
+      expect(res.body.error.code).toBe("VALIDATION_ERROR")
+    })
+
+    it("a refused top-up is recorded, and its key is spent", async () => {
+      // FR-4.8: a refusal is a FAILED transfer, not the absence of one. The
+      // top-up path skipped this, so the key stayed live and minted again a
+      // day later — §12.2 says that is a 409.
+      const user = await newUser()
+      for (let i = 0; i < 3; i++) {
+        await request(user.app)
+          .post("/api/accounts/topup")
+          .set("authorization", `Bearer ${user.token}`)
+          .set("idempotency-key", randomUUID())
+          .send()
+      }
+
+      const key = randomUUID()
+      const refused = await request(user.app)
+        .post("/api/accounts/topup")
+        .set("authorization", `Bearer ${user.token}`)
+        .set("idempotency-key", key)
+        .send()
+      expect(refused.status).toBe(422)
+
+      const failed = await prisma.transfer.findFirst({ where: { idempotencyKey: key } })
+      expect(failed?.status).toBe("FAILED")
+      expect(failed?.failReason).toBe("LIMIT_EXCEEDED")
+
+      const stored = await prisma.idempotencyRecord.findUnique({ where: { key } })
+      expect(stored).not.toBeNull()
+
+      // Replaying the key returns the stored refusal rather than executing.
+      const replay = await request(user.app)
+        .post("/api/accounts/topup")
+        .set("authorization", `Bearer ${user.token}`)
+        .set("idempotency-key", key)
+        .send()
+      expect(replay.status).toBe(422)
+    })
+
     it("requires an Idempotency-Key, like every money-moving POST", async () => {
       const user = await newUser()
       const res = await request(user.app)
@@ -260,16 +311,71 @@ describe.skipIf(!hasDatabase)("day 5 — top-up, accounts and lookup", () => {
 
     it("refuses a malformed number before spending an allowance", async () => {
       const caller = await newUser()
+      const target = await newUser()
 
-      const res = await request(caller.app)
+      const bad = await request(caller.app)
         .get("/api/recipients/lookup?phone=998901234567")
         .set("authorization", `Bearer ${caller.token}`)
 
-      expect(res.status).toBe(400)
-      expect(res.body.error.details).toContainEqual({
+      expect(bad.status).toBe(400)
+      expect(bad.body.error.details).toContainEqual({
         path: ["phone"],
         code: "phone.invalid_format",
       })
+
+      // The point of the test's name, which the earlier version never checked:
+      // twenty malformed requests must leave the allowance untouched.
+      for (let i = 0; i < 19; i++) {
+        await request(caller.app)
+          .get("/api/recipients/lookup?phone=not-a-number")
+          .set("authorization", `Bearer ${caller.token}`)
+      }
+
+      const ok = await request(caller.app)
+        .get(`/api/recipients/lookup?phone=${encodeURIComponent(target.phone)}`)
+        .set("authorization", `Bearer ${caller.token}`)
+      expect(ok.status).toBe(200)
+    })
+
+    it("the window slides: an hour later the allowance is back", async () => {
+      // Pins FR-4.9's *window*, not just its count. Mutations that shrank the
+      // window sixtyfold, or removed the sliding filter so twenty was a
+      // per-process lifetime cap, both passed the earlier suite.
+      let clock = Date.now()
+      const { app } = buildApp(prisma, { ...process.env }, () => clock)
+
+      const phone = uniquePhone()
+      const created = await request(app)
+        .post("/api/auth/register")
+        .send({ phone, firstName: "Win", lastName: "Dow", password: PASSWORD })
+      const token = created.body.accessToken as string
+      const target = await newUser()
+
+      for (let i = 0; i < 20; i++) {
+        const ok = await request(app)
+          .get(`/api/recipients/lookup?phone=${encodeURIComponent(target.phone)}`)
+          .set("authorization", `Bearer ${token}`)
+        expect(ok.status, `lookup ${i + 1}`).toBe(200)
+      }
+
+      const blocked = await request(app)
+        .get(`/api/recipients/lookup?phone=${encodeURIComponent(target.phone)}`)
+        .set("authorization", `Bearer ${token}`)
+      expect(blocked.status).toBe(429)
+
+      // Fifty-nine minutes is still inside the window.
+      clock += 59 * 60 * 1000
+      const stillBlocked = await request(app)
+        .get(`/api/recipients/lookup?phone=${encodeURIComponent(target.phone)}`)
+        .set("authorization", `Bearer ${token}`)
+      expect(stillBlocked.status).toBe(429)
+
+      // Just past the hour, it is not.
+      clock += 2 * 60 * 1000
+      const allowed = await request(app)
+        .get(`/api/recipients/lookup?phone=${encodeURIComponent(target.phone)}`)
+        .set("authorization", `Bearer ${token}`)
+      expect(allowed.status).toBe(200)
     })
   })
 
@@ -281,6 +387,48 @@ describe.skipIf(!hasDatabase)("day 5 — top-up, accounts and lookup", () => {
 
     it("survives a single-word name", () => {
       expect(maskRecipientName("Alisher", "")).toBe("ALISHER")
+      expect(maskRecipientName("", "Toshmatov")).toBe("T.")
+    })
+
+    /**
+     * The earlier tests used two short ASCII surnames, and three mutations that
+     * published the full surname — for long names, for non-Latin names, and
+     * for an empty given name — all passed. `nameSchema` is deliberately
+     * Unicode-aware, so these are the inputs the rule actually governs.
+     */
+    const SURNAMES = [
+      "Toshmatov",
+      "Rahmonberdiyev",
+      "Abdurahmonov",
+      "Петров",
+      "Иванова",
+      "Gʻulomov",
+      "Müller",
+      "ß",
+      "Ölmez",
+      String.fromCodePoint(0x1d4b2) + "illiams",
+      "李",
+      "O'Brien",
+    ]
+
+    it.each(SURNAMES)("never publishes more than one letter of %s", (surname) => {
+      const masked = maskRecipientName("Ali", surname)
+
+      // The rest of the surname is gone.
+      const rest = [...surname].slice(1).join("")
+      if (rest.length > 0) expect(masked).not.toContain(rest)
+
+      // Exactly one code point, then a full stop.
+      const initials = masked.slice("ALI ".length)
+      expect([...initials]).toHaveLength(2)
+      expect(initials.endsWith(".")).toBe(true)
+    })
+
+    it.each(SURNAMES)("emits well-formed Unicode for %s", (surname) => {
+      const masked = maskRecipientName("Ali", surname)
+      // An unpaired surrogate is an ill-formed string in a JSON body, and
+      // `charAt(0)` produced one for any surname above the BMP.
+      expect(masked).toBe(masked.toWellFormed())
     })
   })
 })
@@ -319,15 +467,105 @@ describe.skipIf(!hasDatabase)("reconciliation (I-4, §20.4)", () => {
       data: { balance: original + 12345n },
     })
 
-    const report = await reconcile(prisma)
-    expect(isHealthy(report)).toBe(false)
-    expect(report.drifts).toHaveLength(1)
-    expect(report.drifts[0]?.accountId).toBe(account.id)
-    expect(report.drifts[0]?.drift).toBe(12345n)
-    // The ledger itself is untouched — only the cached snapshot lied.
-    expect(report.globalSum).toBe(0n)
+    try {
+      const report = await reconcile(prisma)
+      expect(isHealthy(report)).toBe(false)
+      expect(report.drifts.map((d) => d.accountId)).toContain(account.id)
+      expect(report.drifts.find((d) => d.accountId === account.id)?.drift).toBe(12345n)
+      // The ledger itself is untouched — only the cached snapshot lied.
+      expect(report.globalSum).toBe(0n)
+    } finally {
+      // Without the `finally`, one failing assertion left the drift in place —
+      // and ledger rows cannot be deleted, so the only repair was a hand-written
+      // UPDATE. Four red runs during a review poisoned the shared database and
+      // made a sibling test fail forever on unmutated code.
+      await prisma.account.update({ where: { id: account.id }, data: { balance: original } })
+    }
 
-    await prisma.account.update({ where: { id: account.id }, data: { balance: original } })
     expect(isHealthy(await reconcile(prisma))).toBe(true)
+  })
+
+  it("sees an account that has no ledger entries at all", async () => {
+    // The LEFT JOIN and the COALESCE exist for this case, and the file's own
+    // comment names it as the one that matters most. Two one-word mutations —
+    // LEFT JOIN to JOIN, and dropping COALESCE — each blinded the query to 65%
+    // of accounts while every test stayed green, because the drift test picked
+    // an unordered "first row" that happened to have entries.
+    const fresh = await prisma.user.create({
+      data: {
+        phone: uniquePhone(),
+        firstName: "Zero",
+        lastName: "Entries",
+        passwordHash: "not-a-credential",
+        accounts: { create: { currency: "UZS", type: "USER", balance: 0n } },
+      },
+      select: { accounts: { select: { id: true } } },
+    })
+    const accountId = fresh.accounts[0]?.id ?? ""
+
+    const entries = await prisma.ledgerEntry.count({ where: { accountId } })
+    expect(entries, "the fixture must genuinely have no entries").toBe(0)
+
+    try {
+      await prisma.account.update({ where: { id: accountId }, data: { balance: 777n } })
+
+      const report = await reconcile(prisma)
+      expect(report.drifts.map((d) => d.accountId)).toContain(accountId)
+      expect(report.drifts.find((d) => d.accountId === accountId)?.drift).toBe(777n)
+    } finally {
+      await prisma.account.update({ where: { id: accountId }, data: { balance: 0n } })
+    }
+
+    expect(isHealthy(await reconcile(prisma))).toBe(true)
+  })
+})
+
+describe.skipIf(!hasDatabase)("top-up under load (FR-10, NFR-2)", () => {
+  let prisma: PrismaClient
+
+  beforeAll(async () => {
+    prisma = createPrismaClient(testEnv({ ...process.env }))
+    await seed(prisma)
+  })
+  afterAll(async () => {
+    await prisma.$disconnect()
+  })
+
+  it("twelve different users can each take their first top-up at once", async () => {
+    // §13.4 makes "Demo top-up" the action on an empty Home screen, so this is
+    // the onboarding path, not an edge case. Every top-up debits the same
+    // treasury row, which under Serializable made it a global conflict point:
+    // eight of twelve aborted and surfaced as INTERNAL. An advisory lock turns
+    // the contention into a queue.
+    const { app } = buildApp(prisma, { ...process.env })
+
+    const tokens = await Promise.all(
+      Array.from({ length: 12 }, async () => {
+        const res = await request(app).post("/api/auth/register").send({
+          phone: uniquePhone(),
+          firstName: "Load",
+          lastName: "Tester",
+          password: PASSWORD,
+        })
+        return res.body.accessToken as string
+      }),
+    )
+
+    const results = await Promise.all(
+      tokens.map((token) =>
+        request(app)
+          .post("/api/accounts/topup")
+          .set("authorization", `Bearer ${token}`)
+          .set("idempotency-key", randomUUID())
+          .send(),
+      ),
+    )
+
+    const statuses = results.map((r) => r.status)
+    const failures = statuses.filter((s) => s !== 201)
+
+    expect(failures, `statuses: ${statuses.join(",")}`).toEqual([])
+    // And nothing was created out of nothing while they queued.
+    expect(await reconcile(prisma).then((r) => r.globalSum)).toBe(0n)
   })
 })

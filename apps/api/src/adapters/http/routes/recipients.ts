@@ -31,6 +31,8 @@ const LOOKUP_WINDOW_MS = 60 * 60 * 1000
 const lookupWindows = new Map<string, number[]>()
 
 function withinLookupLimit(userId: string, now: number): boolean {
+  evictExpired(now)
+
   const recent = (lookupWindows.get(userId) ?? []).filter((at) => at > now - LOOKUP_WINDOW_MS)
 
   if (recent.length >= LOOKUP_LIMIT) {
@@ -43,6 +45,28 @@ function withinLookupLimit(userId: string, now: number): boolean {
   return true
 }
 
+let lastEvictionAt = 0
+
+/**
+ * Without this the map only ever grows: a caller who looks someone up once and
+ * never returns keeps their key for the life of the process, because the only
+ * code that touched an entry was that same caller's next request. Measured at
+ * 1 760 bytes per caller, monotonic, with no ceiling.
+ *
+ * Swept at most once a minute so a burst of traffic does not pay for it on
+ * every request.
+ */
+function evictExpired(now: number): void {
+  if (now - lastEvictionAt < 60_000) return
+  lastEvictionAt = now
+
+  for (const [userId, timestamps] of lookupWindows) {
+    if (timestamps.every((at) => at <= now - LOOKUP_WINDOW_MS)) {
+      lookupWindows.delete(userId)
+    }
+  }
+}
+
 /** Exposed so tests can start from a known state rather than a shared one. */
 export function resetLookupWindows(): void {
   lookupWindows.clear()
@@ -51,6 +75,14 @@ export function resetLookupWindows(): void {
 export interface RecipientRouterDependencies {
   readonly prisma: PrismaClient
   readonly tokens: TokenService
+  /**
+   * Injected so a test can move the window rather than wait an hour.
+   * `TransferService` already takes one for exactly this reason; calling
+   * `Date.now()` inline here meant FR-4.9's *window* — as opposed to its count
+   * — had no way to be tested at all, and three mutations that gutted it
+   * passed the suite.
+   */
+  readonly now?: () => number
 }
 
 /**
@@ -60,7 +92,11 @@ export interface RecipientRouterDependencies {
  * registered, and who is it". Three things keep that narrow — an exact
  * full-number match only, a masked name, and a per-user hourly cap.
  */
-export function recipientRouter({ prisma, tokens }: RecipientRouterDependencies): Router {
+export function recipientRouter({
+  prisma,
+  tokens,
+  now = () => Date.now(),
+}: RecipientRouterDependencies): Router {
   const router = Router()
   const phoneSchema = createRegionalPhoneSchema(DEFAULT_REGION)
 
@@ -73,7 +109,7 @@ export function recipientRouter({ prisma, tokens }: RecipientRouterDependencies)
       throw new ValidationError([{ path: ["phone"], code: "phone.invalid_format" }])
     }
 
-    if (!withinLookupLimit(userId, Date.now())) {
+    if (!withinLookupLimit(userId, now())) {
       throw new DomainError("RATE_LIMITED", "Too many lookups")
     }
 

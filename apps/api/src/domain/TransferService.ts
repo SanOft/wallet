@@ -415,6 +415,23 @@ export class TransferService {
           async (tx) => {
             const now = this.#now()
 
+            /**
+             * Every top-up in the system debits the same treasury row, which
+             * under Serializable makes it a global conflict point rather than
+             * a hot row: twelve different users each doing their first-ever
+             * top-up concurrently saw eight of them abort with P2034 and
+             * surface as INTERNAL. The retry ladder was tuned for P2P, where
+             * the contended account is one recipient among many; here it is
+             * every request.
+             *
+             * A transaction-scoped advisory lock turns that into a queue.
+             * Callers wait for their turn and then commit, instead of racing,
+             * losing, and being told the technical failure is theirs. It is
+             * released automatically at COMMIT or ROLLBACK, so a crash cannot
+             * strand it.
+             */
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('wallet:treasury'))`
+
             const treasury = await tx.account.findFirst({
               where: { type: "TREASURY", currency: "UZS" },
               select: { id: true, balance: true },
@@ -453,7 +470,25 @@ export class TransferService {
               now,
             })
           },
-          { isolationLevel: "Serializable" },
+          /**
+           * Read Committed, deliberately, and it is not a weakening.
+           *
+           * The advisory lock above is mutual exclusion: only one top-up runs
+           * at a time, so there is no concurrent writer for an isolation level
+           * to protect against. Serializable here was strictly worse — its
+           * snapshot is taken when the transaction's first statement runs,
+           * which is *before* the lock is granted, so every queued caller woke
+           * with a stale snapshot and was aborted by SSI at COMMIT. The lock
+           * and the optimistic detector do not compose.
+           *
+           * What FR-4.3's Serializable requirement protects is two transfers
+           * racing on one user's balance. That race cannot arise on this path:
+           * the treasury is allowed to go negative (§9.4), so there is no
+           * balance constraint to lose, and the writer is serialized anyway.
+           * The ledger invariants are enforced by the deferred triggers, which
+           * are isolation-independent.
+           */
+          { isolationLevel: "ReadCommitted" },
         )
       } catch (error) {
         if (isUniqueViolation(error)) {
@@ -461,7 +496,13 @@ export class TransferService {
           if (settled) return this.#settle(settled)
           throw new IdempotencyConflictError()
         }
+        // The same treatment `execute` gives a refusal, and for the same
+        // reasons. Leaving it out meant a refused top-up wrote no FAILED row
+        // (FR-4.8), stored no outcome (FR-4.4), and left the key live — so the
+        // very same key minted a fresh 1 000 000 UZS a day later, which §12.2
+        // says is a 409.
         if (error instanceof DomainError) {
+          await this.#recordFailure(input, requestHash, error)
           throw error
         }
         if (!isSerializationFailure(error)) throw error
@@ -490,14 +531,30 @@ export class TransferService {
 
     try {
       await this.#prisma.$transaction(async (tx) => {
-        const sender = await tx.account.findFirst({
+        // A top-up runs treasury -> caller, so its parties are the mirror of a
+        // P2P's and `recipientPhone` is empty. Resolving them the same way
+        // would silently record nothing.
+        const isTopUp = (input.type ?? "P2P") === "TOPUP"
+
+        const own = await tx.account.findFirst({
           where: { userId: input.senderUserId, currency: "UZS", type: "USER" },
           select: { id: true },
         })
-        const recipient = await tx.account.findFirst({
-          where: { user: { phone: input.recipientPhone }, currency: "UZS", type: "USER" },
-          select: { id: true },
-        })
+        const treasury = isTopUp
+          ? await tx.account.findFirst({
+              where: { type: "TREASURY", currency: "UZS" },
+              select: { id: true },
+            })
+          : null
+        const counterparty = isTopUp
+          ? own
+          : await tx.account.findFirst({
+              where: { user: { phone: input.recipientPhone }, currency: "UZS", type: "USER" },
+              select: { id: true },
+            })
+
+        const sender = isTopUp ? treasury : own
+        const recipient = counterparty
         // Nothing to attribute the attempt to. A refusal we cannot place in
         // anyone's history is better dropped than invented.
         if (!sender || !recipient || sender.id === recipient.id) return

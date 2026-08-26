@@ -21,11 +21,21 @@ export interface AppDependencies {
   readonly auth: AuthService
   readonly tokens: TokenService
   readonly transfers: TransferService
+  /** Test seam for time-window rules; production uses the real clock. */
+  readonly now?: () => number
 }
 
 /**
- * Builds the HTTP adapter (spec §8.3). This layer parses and formats; it holds
- * no business rules, and the domain it calls knows nothing about it.
+ * Builds the HTTP adapter (spec §8.3). This layer parses and formats, and the
+ * domain it calls knows nothing about it.
+ *
+ * One exception, stated rather than glossed: `routes/recipients.ts` holds
+ * FR-4.9's rate limit and queries Prisma directly, and `routes/accounts.ts`
+ * queries Prisma directly too. §8.3's C3 diagram puts both behind an
+ * `AccountService`. The cost is concrete — the USSD adapter (B6) needs
+ * recipient lookup and will either reimplement the cap or share none of it —
+ * and the extraction is tracked as P-19. `transferRouter` beside them shows
+ * the shape the other two should take.
  *
  * Middleware order is load-bearing:
  *   1. requestId — everything after it, including the logger, needs the id
@@ -36,7 +46,15 @@ export interface AppDependencies {
  *      error instead of Express's HTML page
  *   6. the error handler, which must come last to catch what they throw
  */
-export function createApp({ prisma, log, env, auth, tokens, transfers }: AppDependencies): Express {
+export function createApp({
+  prisma,
+  log,
+  env,
+  auth,
+  tokens,
+  transfers,
+  now: nowFn,
+}: AppDependencies): Express {
   const app = express()
 
   // Render sits in front of this process; without it every client IP in the
@@ -88,7 +106,7 @@ export function createApp({ prisma, log, env, auth, tokens, transfers }: AppDepe
   app.use(authRouter({ auth, tokens, env }))
   app.use(transferRouter({ transfers, tokens }))
   app.use(accountRouter({ prisma, transfers, tokens }))
-  app.use(recipientRouter({ prisma, tokens }))
+  app.use(recipientRouter({ prisma, tokens, ...(nowFn ? { now: nowFn } : {}) }))
 
   app.use(notFoundHandler)
 
