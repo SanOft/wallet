@@ -13,7 +13,14 @@ import { authRouter } from "./routes/auth.js"
 import { healthRouter } from "./routes/health.js"
 import { recipientRouter } from "./routes/recipients.js"
 import { transferRouter } from "./routes/transfers.js"
-import { authRateLimit, corsPolicy, globalRateLimit, securityHeaders } from "./security.js"
+import {
+  authRateLimit,
+  corsPolicy,
+  globalRateLimit,
+  securityHeaders,
+  terminatePreflight,
+  varyOrigin,
+} from "./security.js"
 
 export interface AppDependencies {
   readonly prisma: PrismaClient
@@ -70,12 +77,17 @@ export function createApp({
   app.set("trust proxy", 1)
   app.disable("x-powered-by")
 
-  // Before anything that reads the request: a rejected origin or a throttled
-  // caller should not reach a handler, and the headers belong on every
+  // Before anything that reads the request: the headers belong on every
   // response including the error ones.
   app.use(securityHeaders())
-  app.use(corsPolicy(env))
+  app.use(varyOrigin())
 
+  // Ahead of CORS, deliberately. `cors` answers an allowed preflight itself and
+  // returns, so anything mounted after it never sees one — which left every
+  // preflight uncounted by both limiters and unlabelled by `requestId`. Five
+  // hundred of them cost nothing and appeared nowhere. Identity and metering
+  // now come first, and CORS decides only what a browser may do with the
+  // response.
   app.use(requestId)
 
   app.use(
@@ -112,6 +124,14 @@ export function createApp({
   app.use(globalRateLimit())
   // Registration and login carry their own, much tighter, budget.
   app.use(["/api/auth/register", "/api/auth/login"], authRateLimit())
+
+  // Only now: a refused origin has already been counted, and an allowed
+  // preflight is answered here.
+  app.use(corsPolicy(env))
+  // Whatever `cors` left unanswered — a refused origin, or no origin at all —
+  // ends here rather than in Express's automatic OPTIONS handler, which
+  // discloses the route's verb list to precisely the caller CORS refused.
+  app.use(terminatePreflight())
 
   app.use(express.json({ limit: "16kb" }))
 

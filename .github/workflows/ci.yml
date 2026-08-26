@@ -61,6 +61,12 @@ jobs:
       # NFR-1.9 and 17.3 name gitleaks three times between them. Pinned by
       # digest rather than by tag: an image tag is mutable, and a secret
       # scanner is the last place to accept "whatever is there today".
+      #
+      # `--baseline-path` accepts the two findings this repository's history
+      # genuinely contains — a placeholder in `.env.example` and a test constant
+      # in `helpers.ts`, both from e3f6d6e — by fingerprint. It replaces an
+      # allowlist that granted the whole commit and the whole of `.env.example`,
+      # which is the file documenting every production secret.
       - name: gitleaks
         run: |
-          docker run --rm -v "$PWD:/repo"             zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854             detect --source=/repo --config=/repo/.gitleaks.toml --redact --no-banner
+          docker run --rm -v "$PWD:/repo"             zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854             detect --source=/repo --config=/repo/.gitleaks.toml             --baseline-path=/repo/.gitleaks-baseline.json --redact --no-banner

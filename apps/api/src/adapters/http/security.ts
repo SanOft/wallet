@@ -1,6 +1,7 @@
+import { isIP } from "node:net"
 import cors from "cors"
-import type { RequestHandler } from "express"
-import { rateLimit } from "express-rate-limit"
+import type { Request, RequestHandler } from "express"
+import { ipKeyGenerator, rateLimit } from "express-rate-limit"
 import helmet from "helmet"
 import type { Env } from "../../config/env.js"
 import { DomainError } from "../../domain/errors.js"
@@ -75,11 +76,76 @@ export function corsPolicy(env: Env): RequestHandler {
       callback(null, false)
     },
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    // Only the verbs routes actually implement. Advertising PUT and DELETE
+    // described an API that does not exist.
+    methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["content-type", "authorization", "idempotency-key", "x-request-id"],
-    exposedHeaders: ["x-request-id"],
+    // A cross-origin caller can read only what is named here. Without the rate
+    // limit headers the PWA cannot render §12.3's "try again in X minutes" —
+    // the values are on the response and the browser hides them.
+    exposedHeaders: ["x-request-id", "retry-after", "ratelimit", "ratelimit-policy"],
     maxAge: 600,
   })
+}
+
+/**
+ * `Vary: Origin` on every response, not only the ones CORS decorated.
+ *
+ * A refused origin gets no `Access-Control-*` headers, and `cors` returns
+ * before setting `Vary` — so the allowed and refused variants of the same URL
+ * are byte-identical to a cache keyed on the URL alone, and it may serve the
+ * header-less one to an allowlisted origin. Availability rather than
+ * disclosure, but both variants have to declare what they vary on.
+ */
+export function varyOrigin(): RequestHandler {
+  return (_req, res, next) => {
+    res.vary("Origin")
+    next()
+  }
+}
+
+/**
+ * Ends every preflight that `cors` did not.
+ *
+ * `cors` answers an allowed preflight itself. A refused one calls `next()` and
+ * emits nothing, so the request used to fall through to Express 5's automatic
+ * OPTIONS handler, which replies `200` with `Allow: POST` and the verb list as
+ * a `text/plain` body. Unauthenticated, unthrottled, and outside §12.3 — and
+ * because an unrouted path 404s instead, the pair is a clean route-existence
+ * oracle for exactly the caller CORS just refused.
+ *
+ * Answering every remaining preflight identically removes the signal: 204, no
+ * body, no `Allow`, no CORS headers. A caller learns only that the server
+ * speaks HTTP.
+ */
+export function terminatePreflight(): RequestHandler {
+  return (req, res, next) => {
+    if (req.method !== "OPTIONS") {
+      next()
+      return
+    }
+    res.status(204).end()
+  }
+}
+
+/**
+ * The bucket a request counts against.
+ *
+ * `req.ip` is whatever the trusted hop reported, and off the load balancer that
+ * is the caller (P-11). Forgery is one problem; a value that is not an address
+ * at all is a worse one, because every distinct string becomes its own counter
+ * and therefore its own full budget — thirty requests with thirty different
+ * garbage headers were never throttled at all. Anything unparsable shares a
+ * single bucket, so the same trick now costs one budget rather than minting
+ * them.
+ *
+ * Real addresses go through `ipKeyGenerator`, which masks IPv6 to a subnet —
+ * a single client controls far more than one v6 address.
+ */
+function clientKey(req: Request): string {
+  const ip = req.ip
+  if (!ip || isIP(ip) === 0) return "unparsable-client-address"
+  return ipKeyGenerator(ip)
 }
 
 /**
@@ -98,12 +164,15 @@ function limiter(options: {
   readonly windowMs: number
   readonly max: number
   readonly message: string
+  readonly skipPreflight?: boolean
 }): RequestHandler {
   return rateLimit({
     windowMs: options.windowMs,
     limit: options.max,
     standardHeaders: "draft-7",
     legacyHeaders: false,
+    keyGenerator: clientKey,
+    ...(options.skipPreflight ? { skip: (req: Request) => req.method === "OPTIONS" } : {}),
     // Routed through the error handler so a throttled caller gets the §12.3
     // envelope like every other failure, rather than express-rate-limit's own
     // plain-text body.
@@ -140,5 +209,11 @@ export function authRateLimit(): RequestHandler {
     windowMs: 15 * 60 * 1000,
     max: 20,
     message: "Too many authentication attempts",
+    // This budget bounds authentication *attempts*. A browser sends a preflight
+    // before every cross-origin JSON POST, so counting them would halve the
+    // real allowance to ten logins and make the number mean something other
+    // than FR-2.3 says. Preflights are not exempt from metering — the global
+    // limiter counts them.
+    skipPreflight: true,
   })
 }

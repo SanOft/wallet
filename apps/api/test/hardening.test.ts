@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { apiErrorSchema } from "@wallet/shared"
 import request from "supertest"
 import { describe, expect, it } from "vitest"
+import { loadEnv } from "../src/config/env.js"
 import { buildApp, PRISMA_STUB } from "./helpers.js"
 
 /**
@@ -97,12 +98,100 @@ describe("CORS is an allowlist, never a wildcard (NFR-1.8)", () => {
     expect(res.headers["access-control-allow-headers"]?.toLowerCase()).toContain("idempotency-key")
   })
 
+  it("tells a refused caller nothing about which routes exist", async () => {
+    // A refused preflight used to fall through to Express's automatic OPTIONS
+    // handler: 200 with `Allow: POST` and the verb list as a plain-text body on
+    // a real route, 404 on an invented one. Unauthenticated route discovery,
+    // handed to exactly the origin CORS had just refused.
+    const instance = app({ CORS_ORIGINS: ORIGIN })
+
+    const real = await request(instance)
+      .options("/api/transfers")
+      .set("origin", "https://evil.example.com")
+      .set("access-control-request-method", "POST")
+
+    const invented = await request(instance)
+      .options("/api/there-is-no-such-route")
+      .set("origin", "https://evil.example.com")
+      .set("access-control-request-method", "POST")
+
+    expect(real.status).toBe(invented.status)
+    expect(real.headers.allow).toBeUndefined()
+    expect(invented.headers.allow).toBeUndefined()
+    expect(real.headers["access-control-allow-origin"]).toBeUndefined()
+    expect(real.text).toBe("")
+  })
+
+  it("declares that its answer depends on the origin, even when refusing", async () => {
+    // Both variants of the same URL must vary on Origin, or a shared cache can
+    // hand the header-less one to an allowlisted caller.
+    const res = await request(app({ CORS_ORIGINS: ORIGIN }))
+      .get("/health")
+      .set("origin", "https://evil.example.com")
+
+    expect(res.headers.vary ?? "").toContain("Origin")
+  })
+
+  it("exposes the headers a throttled client has to read", async () => {
+    const res = await request(app({ CORS_ORIGINS: ORIGIN }))
+      .get("/health")
+      .set("origin", ORIGIN)
+
+    // §12.3 renders "try again in X minutes" from Retry-After. Cross-origin, a
+    // header the server sends is invisible to JS unless it is exposed.
+    const exposed = (res.headers["access-control-expose-headers"] ?? "").toLowerCase()
+    expect(exposed).toContain("retry-after")
+    expect(exposed).toContain("ratelimit")
+  })
+
   it("lets a caller with no Origin through", async () => {
     // Server-side callers, health probes and curl send none. CORS governs what
     // one browser tab may do to another; it is not authentication, and
     // treating it as such is how an API ends up believed to be protected.
     const res = await request(app({ CORS_ORIGINS: ORIGIN })).get("/health")
     expect(res.status).toBe(200)
+  })
+})
+
+describe("the allowlist is validated, not merely described (NFR-1.8)", () => {
+  function withOrigins(value: string) {
+    return () =>
+      loadEnv({
+        DATABASE_URL: "postgresql://unused",
+        JWT_SECRET: "x".repeat(32),
+        CORS_ORIGINS: value,
+      })
+  }
+
+  it("refuses a wildcard", () => {
+    // The comment above this variable said NFR-1.8 forbids `*`. The schema
+    // checked only that the string was non-empty.
+    expect(withOrigins("*")).toThrow(/CORS_ORIGINS/)
+    expect(withOrigins("https://wallet.example.com,*")).toThrow(/CORS_ORIGINS/)
+  })
+
+  it("refuses the literal origin `null`", () => {
+    // Not a curiosity: sandboxed iframes and `data:` documents send it, and the
+    // policy grants credentials. A deploy template rendering an unset variable
+    // as "null" would have opened it.
+    expect(withOrigins("null")).toThrow(/CORS_ORIGINS/)
+  })
+
+  it("refuses plaintext for anything but localhost", () => {
+    expect(withOrigins("http://wallet.example.com")).toThrow(/https/)
+    expect(withOrigins("http://localhost:5173")).not.toThrow()
+  })
+
+  it("normalises what a dashboard is likely to contain", () => {
+    // A mixed-case or trailing-slash entry produced an allowlist that could
+    // never match the origin a browser actually sends — a failure that looks
+    // like a CORS bug and invites a wildcard as the fix.
+    const env = loadEnv({
+      DATABASE_URL: "postgresql://unused",
+      JWT_SECRET: "x".repeat(32),
+      CORS_ORIGINS: "https://Wallet.Example.com/, https://api.example.com",
+    })
+    expect(env.CORS_ORIGINS).toEqual(["https://wallet.example.com", "https://api.example.com"])
   })
 })
 
@@ -154,6 +243,49 @@ describe("rate limiting (§17.1 denial of service, §17.3)", () => {
     const res = await request(app()).get("/health")
     // draft-7 RateLimit header, so a well-behaved client can back off before
     // being refused rather than after.
+    expect(res.headers.ratelimit ?? res.headers["ratelimit-limit"]).toBeDefined()
+  })
+
+  it("advertises the exact global budget, not merely a budget", async () => {
+    // The header's presence was asserted; its value was not. Raising the limit
+    // from 300 to 100 000 left the whole suite green, which made §17.1's
+    // denial-of-service row unfalsifiable.
+    const res = await request(app()).get("/health")
+    const header = res.headers.ratelimit ?? res.headers["ratelimit-limit"] ?? ""
+    expect(header).toContain("limit=300")
+  })
+
+  it("a forwarded-for that is not an address does not mint a fresh budget", async () => {
+    // Every distinct string used to become its own counter, so thirty requests
+    // carrying thirty different garbage values were never throttled once. They
+    // share one bucket now.
+    const instance = app()
+    const statuses: number[] = []
+
+    for (let i = 0; i < 24; i++) {
+      const res = await request(instance)
+        .post("/api/auth/register")
+        .set("x-forwarded-for", `not-an-ip-${i}`)
+        .send({ phone: "+998901234567", firstName: "A", lastName: "B", password: "x" })
+      statuses.push(res.status)
+    }
+
+    expect(
+      statuses.filter((s) => s === 429).length,
+      `statuses: ${statuses.join(",")}`,
+    ).toBeGreaterThan(0)
+  })
+
+  it("counts a preflight and gives it an identity", async () => {
+    // Both limiters and `requestId` used to be mounted after CORS, which
+    // answers an allowed preflight itself — so five hundred of them cost
+    // nothing and appeared in no log.
+    const res = await request(app({ CORS_ORIGINS: ORIGIN }))
+      .options("/api/transfers")
+      .set("origin", ORIGIN)
+      .set("access-control-request-method", "POST")
+
+    expect(res.headers["x-request-id"]).toBeDefined()
     expect(res.headers.ratelimit ?? res.headers["ratelimit-limit"]).toBeDefined()
   })
 
