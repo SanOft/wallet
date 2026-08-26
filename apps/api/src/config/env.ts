@@ -35,10 +35,24 @@ const envSchema = z.object({
         .filter((origin) => origin.length > 0),
     ),
 
+  /**
+   * HS256 signing secret (§20.2). Rejected below 32 characters because HMAC-SHA256
+   * takes a 256-bit key: a shorter secret is not "weaker but working", it is the
+   * one thing standing between a forged token and an authenticated request, and
+   * a deploy that quietly used `changeme` would look identical to a correct one.
+   */
+  JWT_SECRET: z.string().min(32, { error: "JWT_SECRET must be at least 32 characters (256 bits)" }),
+
+  /** Cookie domain for the refresh token (§20.2). Omitted in development. */
+  REFRESH_COOKIE_DOMAIN: z.string().optional(),
+
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 })
 
 /**
+ * NOT YET CONSUMED — the CORS middleware lands at B5 (day 6). It is validated
+ * here anyway so a deploy cannot reach that day without the value already set.
+ *
  * NFR-1.8 forbids a `*` allowlist. An empty one is the other way to get it
  * wrong: in production it either blocks the PWA outright or invites someone to
  * "unbreak" it with a wildcard. Development is allowed to omit it.

@@ -52,6 +52,7 @@ describe("error envelope (spec §12.3)", () => {
     ["AUTH_INVALID_CREDENTIALS", 401],
     ["AUTH_TOKEN_EXPIRED", 401],
     ["AUTH_REFRESH_REUSED", 401],
+    ["AUTH_REFRESH_INVALID", 401],
     ["AUTH_LOCKED", 429],
     ["RATE_LIMITED", 429],
     ["NOT_FOUND", 404],

@@ -32,6 +32,7 @@ const FALLBACK_MESSAGE: Record<ApiErrorCode, string> = {
   AUTH_INVALID_CREDENTIALS: "Invalid credentials",
   AUTH_TOKEN_EXPIRED: "Access token expired",
   AUTH_REFRESH_REUSED: "Refresh token reuse detected",
+  AUTH_REFRESH_INVALID: "Refresh credential is not valid",
   AUTH_LOCKED: "Account temporarily locked",
   RATE_LIMITED: "Too many requests",
   NOT_FOUND: "No such endpoint",

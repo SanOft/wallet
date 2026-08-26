@@ -2,10 +2,9 @@ import type { PrismaClient } from "@prisma/client"
 import request from "supertest"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
-import { createApp } from "../src/adapters/http/app.js"
 import { loadEnv } from "../src/config/env.js"
-import { createLogger } from "../src/infra/logger.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
+import { buildApp } from "./helpers.js"
 
 /**
  * Database-backed suites. They skip rather than fail when DATABASE_URL is
@@ -26,8 +25,7 @@ describe.skipIf(!hasDatabase)("GET /health (runbook T-2.5)", () => {
   })
 
   function app(client: PrismaClient) {
-    const log = createLogger(loadEnv({ ...process.env, LOG_LEVEL: "fatal" }))
-    return createApp({ prisma: client, log })
+    return buildApp(client, { ...process.env, LOG_LEVEL: "fatal" }).app
   }
 
   it("returns 200 with the documented shape and the applied migration", async () => {
