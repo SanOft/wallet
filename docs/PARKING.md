@@ -1,39 +1,93 @@
 # Parking lot
 
-Ideas and known gaps raised while the architecture is frozen (runbook §5).
-Nothing here is scheduled until the freeze lifts, but everything here is real:
-each entry was found by review, not imagined.
+Known gaps, each found by review rather than imagined, each with the reason it
+was not fixed on the spot.
 
-**Rule:** write it down, then go back to the task at hand. A re-design costs
-2–3 hours and there are 33 in total.
+## Two bars, and why the difference matters
 
-## Open
+This started as a portfolio project and the disclaimer in `spec.md` is still
+accurate: no real money moves through it, and there is no licence. But the
+architecture was built to the standard Appendix A states — *"prove that today's
+architecture can absorb real payments without a rewrite"* — and the intent is a
+product, not a demonstration.
 
-| # | Raised | Gap | Why it is parked rather than fixed |
+So the list below is triaged against the **product** bar, not the demo one. The
+distinction is not academic: several entries were reasonable to defer while the
+only user was a reviewer, and stop being reasonable the moment a real person's
+identity or money is in the system.
+
+| Tier | Meaning |
+|---|---|
+| **A** | Blocks the first real user. Not "should fix" — the system is unsafe or broken without it. |
+| **B** | Blocks running unattended, or at more than one instance. Fine while someone is watching; not fine as a service. |
+| **C** | Quality and maintenance. Genuinely September. |
+
+**Rule while the architecture is frozen (runbook §5):** write it down, then go
+back to the task at hand.
+
+---
+
+## Tier A — blocks the first real user
+
+| # | Raised | Gap | Why it is A, and what closing it takes |
 |---|---|---|---|
-| P-2 | Day 2 | **`Account.balance` can drift from `sum(ledger)` with nothing detecting it in real time.** I-4 is specified as a daily reconciliation job (§20.4), so a drift introduced at 09:00 is invisible until the next run. The deferred constraint trigger now proves the *entries* balance, but nothing ties the cached snapshot to them. Options: have the trigger maintain `balance` and `balanceAfter` rather than trusting the writer, or assert them at COMMIT. | Changes the write model day 4's `TransferService` is being written against. Deciding it now, before that service exists, would be guessing. |
-| P-3 | Day 2 | **CI pins its Postgres by floating tag** (`postgres:17-alpine`). Every dependency is pinned through the lockfile; the database the integration tests run against is not, so a green run is not reproducible months later. | One-line fix, but a digest pin belongs with the wider CI hardening in P-5. |
-| P-4 | Day 2 | **The API connects as a superuser that owns its own tables.** The append-only trigger, the treasury guard and the balance constraints all hold against ordinary DML, and none of them survives `ALTER TABLE … DISABLE TRIGGER`, `CREATE OR REPLACE FUNCTION`, or `session_replication_role = replica` — all available to the owner. The real fix is a runtime role that owns nothing and can only `SELECT`/`INSERT`/`UPDATE` on the tables it needs. | Deployment work, and it needs the hosted database (T-2.6) that does not exist yet. Until then the honest claim is "a bug in service code cannot corrupt the ledger", not "nothing can". The migration says so in its own header. |
-| P-5 | Day 2 | **CI supply chain.** `actions/checkout@v4` and `actions/setup-node@v4` are mutable tags, not SHAs. There is no `permissions:` block, so `GITHUB_TOKEN` takes the repository default. No `timeout-minutes`. Only Node 22 is exercised although `engines` allows `^22 \|\| >=24`. | A batch of related changes to one file; worth doing as one deliberate pass rather than piecemeal. |
-| P-7 | Day 2 | **Coverage is not measured.** NFR-6 asks for domain ≥ 90% and overall ≥ 70%; `@vitest/coverage-v8` is not installed and `verify` never runs it. The target is currently an aspiration with no instrument. | Meaningful only once the domain it should cover exists (day 4). Adding a threshold against a health-check-only service would measure nothing. |
-| P-8 | Day 2 | **Idempotency keys share one global namespace.** `idempotency_records.key` is the sole primary key, so one user can pre-claim a key another will use and turn their request into a 409 — a cross-tenant denial of service on the money path. `transfers.idempotencyKey` has the same shape independently. `@@id([userId, key])` fixes it. | Deviates from the §9.1 ER diagram, which shows `key` as the PK. Changing both the model and the spec is a contract decision, and the practical risk is low while keys are unguessable UUID v4. |
-| P-9 | Day 2 | **§12.2 mandates a 400 for a missing `Idempotency-Key` and §12.3 has no code for it.** `VALIDATION_ERROR` with `path: ["Idempotency-Key"], code: "field.required"` is the cheapest resolution. | No money route exists yet. Decide it when B3 lands, in the same change. |
-| P-10 | Day 2 | **`noRestrictedImports` is not wired**, so §8.2's one-way dependency rule is held by review rather than by a rule. Behaviourally it is obeyed today: `packages/shared` imports only `zod`, `apps/api` imports only `@wallet/shared` and npm packages. | Worth doing when `apps/web` has code — one workspace cannot import another that is empty. |
-| P-11 | Day 2 | **`trust proxy` is asserted only in a comment.** Off-Render, `req.ip` and `req.secure` are client-controlled, because the single hop being trusted is then the caller. Day 3–6 rate limiting will bucket on `req.ip`. | Needs a test that pins the behaviour in both topologies; write it with the rate limiter that depends on it. |
-| P-12 | Day 2 | **Spec ER drift.** §9.1 shows `USER ||--|| ACCOUNT` (one-to-one) while the schema allows one account per currency; and `TRANSFER \|o--\|\| IDEMPOTENCY_RECORD` is not modeled — `transfers.idempotencyKey` is a bare unique column with no foreign key. | The schema is the more useful shape (multi-currency is a v2 goal, §21 Q-3). Amend the diagram rather than the schema, as part of a spec pass. |
-| P-13 | Day 3 | **Registration has a timing oracle.** A free number does two INSERTs, a taken one does a failed INSERT; measured means 56.8ms vs 46.8ms, minima fully separated. FR-1.5 and §11.1 are satisfied for body and status only. Login's equivalent oracle was closed by writing `AuthAttempt` unconditionally; registration has no such lever — the fresh path genuinely does more work, so closing it means padding the response to a fixed budget. | A padding strategy is a decision that touches every write path in the service and should be made once, deliberately, rather than bolted onto one endpoint. Classification accuracy measured at 60% against login's 80%, so it is the weaker of the two. |
-| P-14 | Day 3 | **`SameSite=Strict` and the §20.1 topology cannot both hold.** The PWA is on Vercel and the API on Render — two registrable domains, both on the Public Suffix List, so `REFRESH_COOKIE_DOMAIN` cannot bridge them and the browser will not attach the refresh cookie to any cross-site request. Refresh works in every supertest run and in local dev, and fails on the first real deploy. Resolutions: put the API behind the web origin's path so the cookie is same-site, or move to `SameSite=Lax` plus an explicit CSRF token and amend FR-2.4. | Architectural, not a flag. I1's DoD ("cookie attributes production-like") is the gate that should catch it and has not run. Deciding it needs the deploy topology settled, which is day 6. |
-| P-15 | Day 3 | **FR-2.3 lockout is not implemented.** `AuthAttempt` rows are written but nothing counts them; `AUTH_LOCKED` exists in the catalog, in the status map and in a test, for a code the application can never emit. `Retry-After` appears nowhere. | Deferred to September by runbook §4. The spec's §14 B2 said otherwise; that contradiction is now resolved in favour of the runbook, and the rows are written from day 3 precisely so the counter has history when it lands. Login bombardment is unmitigated until then — rate limiting (B5) does not cover it either. |
-| P-16 | Day 3 | **Access tokens outlive revocation by up to 15 minutes.** Family revocation reaches refresh tokens immediately; an already-issued access token is self-contained and keeps working, including the attacker's. FR-2.7 now states the bound. | The fix is a `tokensValidAfter` check, and it is only worth its cost on endpoints that move money — which arrive at B3. |
-| P-17 | Day 3 | **The DB-backed suites clean up nothing and can skip silently.** No teardown anywhere; the container has accumulated hundreds of rows. `uniquePhone()` draws from ~9M values and every run adds registrations, so collision probability grows monotonically. And `describe.skipIf(!hasDatabase)` means a workflow edit that drops `DATABASE_URL` removes 30+ tests while the suite still reports green — it fails open, not closed. | Needs a decision on test isolation strategy (per-suite transaction rollback, a schema per run, or truncation in `afterAll`) that will shape every suite from day 4 on. Worth doing once, before the ledger tests multiply. |
-| P-18 | Day 4 | **FR-4.7's absolute maximum and FR-6.1's WEB per-operation limit are the same number** (10 000 000 UZS), so `limit.per_operation` is unreachable on the web channel — `money.above_maximum` always fires first. The rule is only meaningful for USSD, whose cap is twenty times lower. Not a bug in either clause; they were written independently and happen to coincide. | Deciding whether the web per-operation limit should be lower than the absolute maximum is a product question about fraud exposure, not an implementation one. Recorded so nobody later "fixes" the ordering and expects different behaviour. |
-| P-19 | Day 5 | **No `AccountService`.** §8.3's C3 diagram puts balance, history and lookup in the domain, with an explicit USSD edge and the promise that B6 "plugs in without changing a single line of the domain". `routes/accounts.ts` and `routes/recipients.ts` query Prisma directly, and FR-4.9's 20/hour cap lives in the route. `transferRouter` beside them has the right shape, so the branch ships both patterns. | The extraction is mechanical but it should happen when B6 defines what the USSD channel actually needs from lookup — doing it now would be guessing at the second consumer's shape, and the whole point of the service is to have one implementation for both. |
-| P-21 | Day 5 | **`balanceAfter` is validated by nothing.** Not the `ledger_entries_amount_nonzero` CHECK, not `assert_transfer_balanced` (which checks `amount`), not `reconcile`. §9.2 justifies the column as making an audit O(1); that audit can be silently wrong while I-1 and I-4 both report green. No live write path produces a bad value today. | Extending the deferred trigger to verify `balanceAfter` against a running sum is a per-insert cost on the hottest write in the system, and the right answer may instead be to derive the column in the trigger rather than trust the writer. That is P-2's decision and belongs with it. |
+| P-4 | Day 2 | **The API connects as a superuser that owns its own tables.** The append-only trigger, the treasury guard and the balance constraints all hold against ordinary DML, and none survives `ALTER TABLE … DISABLE TRIGGER`, `CREATE OR REPLACE FUNCTION`, or `session_replication_role = replica`. | The ledger's guarantees are the product. A compromised application process — the most likely thing to be compromised — can currently rewrite them, which is why the migration header claims only that "a bug in service code cannot corrupt the ledger", not that nothing can. Closing it is a runtime role that owns nothing and holds only `SELECT`/`INSERT`/`UPDATE` on the tables it needs. Needs the hosted database (T-2.6). |
+| P-14 | Day 3 | **`SameSite=Strict` and the §20.1 topology cannot both hold.** The PWA on Vercel and the API on Render are two registrable domains, both on the Public Suffix List, so no cookie domain bridges them and the browser will not attach the refresh cookie cross-site. | A **functional** blocker, not only a security one: refresh passes every test here and fails on the first real deploy, so every session dies after fifteen minutes with no way to renew. Two resolutions — put the API behind the web origin's path so the cookie is same-site, or move to `SameSite=Lax` plus an explicit CSRF token and amend FR-2.4. The first is cheaper and strictly stronger. |
+| P-15 | Day 3 | **FR-2.3 lockout is not implemented.** `AuthAttempt` rows are written but nothing counts them; `AUTH_LOCKED` exists in the catalog, the status map and a test, for a code the application can never emit. `Retry-After` appears nowhere. | With real accounts this is account-takeover exposure, not a missing feature. The IP rate limit added at T-6.4 raises the cost of bombardment but does not bound attempts *per account*, which is what FR-2.3 specifies and what a shared NAT or a botnet defeats. The rows have been written since day 3 precisely so the counter has history when it lands. |
+| P-16 | Day 3 | **Access tokens outlive revocation by up to fifteen minutes**, including the attacker's, because a JWT is self-contained and there is no revocation list. | Reuse detection exists to end a stolen session (FR-2.7). Ending it fifteen minutes later, on endpoints that move money, is most of the way to not ending it. A `tokensValidAfter` timestamp checked on the money endpoints closes it, and those endpoints now exist. |
+| P-8 | Day 2 | **Idempotency keys share one global namespace.** `idempotency_records.key` is the sole primary key, so one user can pre-claim a key another will use and turn their transfer into a `409`. `transfers.idempotencyKey` has the same shape independently. | A cross-tenant denial of service on the money path. Unguessable UUIDs make it impractical *today*, which is a statement about clients we do not control — a buggy or hostile client that reuses a fixed key breaks other people's payments. `@@id([userId, key])` fixes it and deviates from §9.1's ER diagram, so the spec changes with it. |
+| P-11 | Day 2 | **`trust proxy` is asserted only in a comment.** Off the load balancer, `req.ip` and `req.secure` are client-controlled, because the single hop being trusted is then the caller. | This moved from theoretical to load-bearing at T-6.4: every rate limit now keys on `req.ip`, so a forged header makes all of them advisory — including the registration cap that P-20's closure depends on. Needs a test pinning the behaviour in both topologies, and a decision about what to trust when the deployment is not behind exactly one proxy. |
+
+---
+
+## Tier B — blocks running unattended, or at more than one instance
+
+| # | Raised | Gap | Why it is B |
+|---|---|---|---|
+| P-22 | Day 6 | **Rate limiting and the lookup counter are in-process.** `express-rate-limit`'s default store and the `Map` in `routes/recipients.ts` both live in one Node process, so the limits are per-instance and reset on restart. | Render's free tier runs one instance, so this is correct *today* and wrong the moment there are two — the effective limit silently multiplies by the instance count. It also resets on every deploy and every cold start (§20.3), which is a scheduled bypass rather than an edge case. A shared store is the fix, and it should move both counters at once. |
+| P-2 | Day 2 | **`Account.balance` can drift from `sum(ledger)` with nothing detecting it in real time.** I-4 is a daily job (§20.4), so a drift at 09:00 is invisible until the next run. | A day of wrong balances is a day of real users deciding on a wrong number, and by then the transfers built on it have happened too. The options are to have the trigger maintain `balance` rather than trust the writer, or to assert it at COMMIT. Now decidable: `TransferService` exists, so this is no longer guessing at a write model that has not been written. |
+| P-21 | Day 5 | **`balanceAfter` is validated by nothing** — not the CHECK, not `assert_transfer_balanced`, not `reconcile`. §9.2 sells the column as making an audit O(1); that audit can be silently wrong while I-1 and I-4 both report green. | Same family as P-2 and should be decided with it. An untrustworthy audit trail is worse than none, because a reconciliation built on it reads from the corrupted source it is meant to police. |
+| P-13 | Day 3 | **Registration has a timing oracle.** A free number does two INSERTs, a taken one a failed INSERT: means 56.8 ms against 46.8 ms, minima fully separated, 60% classification accuracy. | FR-1.5 exists so an attacker cannot walk a number range and learn who banks here. With real customers that list has value, and the control is currently satisfied for body and status only. Login's version was closed by making the write unconditional; registration has no such lever, so closing it means padding responses to a fixed budget — a decision that touches every write path and should be made once. |
+| P-17 | Day 3 | **The DB-backed suites clean up nothing and can skip silently.** No teardown; `uniquePhone()` collision probability grows monotonically; `describe.skipIf(!hasDatabase)` removes thirty-plus tests and still reports green. | It fails open, not closed. A release gate that can quietly stop testing is not a gate, and the day-5 review demonstrated the shared-state half by poisoning the database for four runs. Needs one decision — transaction rollback, a schema per run, or truncation — before more suites are built on the current shape. |
+
+---
+
+## Tier C — quality and maintenance
+
+| # | Raised | Gap | Why it can wait |
+|---|---|---|---|
+| P-5 | Day 2 | CI actions are mutable tags, not SHAs; no `permissions:` block; no `timeout-minutes`; only Node 22 is exercised although `engines` allows `^22 \|\| >=24`. | A batch of related edits to one file, worth one deliberate pass. gitleaks was added pinned by digest at T-6.4, so the pattern to follow is already there. |
+| P-3 | Day 2 | CI pins Postgres by floating tag (`postgres:17-alpine`), so a green run is not reproducible months later. | One line, and it belongs with P-5. |
+| P-19 | Day 5 | **No `AccountService`.** §8.3 puts balance, history and lookup in the domain; `routes/accounts.ts` and `routes/recipients.ts` query Prisma directly, and FR-4.9's cap lives in the route. | Mechanical, but it should happen when B6 defines what the USSD channel needs from lookup — the whole point of the service is one implementation for two consumers, and building it against one is guessing at the other. |
+| P-10 | Day 2 | `noRestrictedImports` is not wired, so §8.2's one-way dependency rule is held by review. Behaviourally obeyed today. | Needs `apps/web` to have code — one workspace cannot import another that is empty. |
+| P-12 | Day 2 | Spec ER drift: §9.1 shows `USER ||--|| ACCOUNT` while the schema allows one account per currency, and `TRANSFER \|o--\|\| IDEMPOTENCY_RECORD` is not modeled. | The schema is the more useful shape; amend the diagram as part of a spec pass. Overlaps with P-8, which changes the same table. |
+| P-18 | Day 4 | FR-4.7's maximum and FR-6.1's WEB per-operation limit are the same number, so `limit.per_operation` is unreachable on the web channel. | A product question about fraud exposure, not an implementation one. Recorded so nobody "fixes" the ordering and expects different behaviour. |
+
+---
+
+## Beyond the code
+
+Closing every entry above still would not make this a product that handles real
+money. Recorded here so the list is not mistaken for a complete one:
+
+- **A licence and a legal entity.** §A.5 is explicit: a real integration with
+  Payme, Click or Uzum requires a contract and a registered company.
+- **KYC and AML.** §3 lists them as frozen non-goals. A product cannot.
+- **Monitoring and alerting.** `fatal` reaches a log stream; nothing pages
+  anyone. The reconciliation job exits non-zero and nothing watches it.
+- **Backup and recovery policy.** A ledger needs a retention decision and a
+  tested restore, not whatever the hosting tier defaults to.
+- **An incident runbook.** What to do when reconciliation fails is currently
+  "someone has to look", which is not a procedure.
+
+---
 
 ## Closed
 
 | # | Raised | Gap | Resolution |
 |---|---|---|---|
-| P-6 | Day 2 | gitleaks was named by the spec three times and existed nowhere. | Added to CI on `feat/hardening`, pinned by image **digest** rather than tag — a mutable tag is the last thing a secret scanner should accept. It found two real matches on the first run: the `.env.example` placeholder, now allowlisted by path with the reason written down, and a hard-coded test secret, which was removed rather than allowlisted — the helper generates one per run now. The historical commit is allowed by SHA, so a real secret added to that same file tomorrow still fails. |
-| P-20 | Day 5 | FR-4.9's lookup cap keyed on `userId`, and identities were free at ~54ms each — 20 lookups times tens of thousands of identities against the clause's 20. | Registration and login now carry a 20-per-15-minutes budget per IP on top of the global 300, so the per-user counter finally has something scarce to count. The residual is P-11: `req.ip` is only trustworthy behind the one proxy hop `trust proxy` is set for. |
-| P-1 | Day 2 | §12.3 had no code for a request that reached no route, an unparseable body, or an oversized one — all three left the API as HTML or as a *retryable* `INTERNAL 500`. | Fixed on `feat/api-skeleton`: `NOT_FOUND`, `MALFORMED_BODY` and `PAYLOAD_TOO_LARGE` added to the catalog and to `packages/shared`, with a terminal 404 handler and body-parser mapping. Covered by `apps/api/test/contract.test.ts`. |
+| P-1 | Day 2 | §12.3 had no code for a request that reached no route, an unparseable body, or an oversized one — all three left the API as HTML or as a *retryable* `INTERNAL 500`. | `NOT_FOUND`, `MALFORMED_BODY` and `PAYLOAD_TOO_LARGE` added to the catalog and to `packages/shared`, with a terminal 404 handler and body-parser mapping. |
+| P-6 | Day 2 | gitleaks was named by the spec three times and existed nowhere. | Added to CI pinned by image **digest**. It found two matches on its first run: the `.env.example` placeholder, allowlisted by path with the reason written down, and a hard-coded test secret, which was removed rather than allowlisted. The historical commit is allowed by SHA, so a real secret in that same file tomorrow still fails. |
+| P-7 | Day 2 | Coverage was an aspiration with no instrument. | Measured and gated in both workspaces. The domain clears 90% on lines, statements and functions; branches sit at a measured floor with the reason recorded rather than the number quietly lowered. `packages/shared` went from 31% to 97% once it had its own tests — which is a large part of why two masking bugs had shipped. |
+| P-9 | Day 2 | §12.2 mandated a 400 for a missing `Idempotency-Key` and §12.3 had no code for it. | Resolved as `VALIDATION_ERROR` with `path: ["Idempotency-Key"], code: "field.required"`, on both money endpoints, each with a test. |
+| P-20 | Day 5 | FR-4.9's lookup cap keyed on `userId`, and identities were free at ~54 ms each. | Registration and login now carry a 20-per-15-minutes budget per IP on top of the global 300, so the per-user counter has something scarce to count. The residual is P-11, which is why that entry moved to Tier A. |
