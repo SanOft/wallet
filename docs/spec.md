@@ -1140,13 +1140,29 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    USER["User's browser"] -->|HTTPS| V["Vercel<br/>apps/web static + SW"]
-    USER -->|"HTTPS /api"| R["Render<br/>apps/api Node"]
+    USER["User's browser"] -->|"HTTPS — everything, one origin"| V["Vercel<br/>apps/web static + SW<br/>rewrites /api to the API"]
+    V -->|"rewrite (ADR-0009)<br/>no CDN caching"| R["Render<br/>apps/api Node"]
     R -->|"TLS, connection pool"| N[("Neon PostgreSQL<br/>main + PR branches")]
     R -->|"1h cache"| CBU["cbu.uz JSON API"]
     GH["GitHub Actions"] -->|deploy| V & R
     GH -->|migrate| N
 ```
+
+**One origin, deliberately (ADR-0009).** The browser never addresses the API
+directly. `vercel.app` and `onrender.com` are separate registrable domains and
+both are on the Public Suffix List, so a `SameSite=Strict` refresh cookie
+(FR-2.4) cannot span them — refresh passes every test, because supertest and
+local development both use a single host, and fails on the first real deploy
+with no error, just sessions that stop renewing. The rewrite makes `/api`
+same-origin, which keeps FR-2.4 exactly as written.
+
+Two things follow. The CDN must store nothing: Vercel honours upstream
+`cache-control` on external rewrites by default for projects created on or after
+6 April 2026, and a cached `GET /api/accounts` is one user's balance shown to
+another — so caching is disabled in `vercel.json` *and* the API sends
+`Cache-Control: no-store`. And the proxy chain gained a hop, so the `trust proxy`
+count that every rate limit depends on must be measured against the real
+deployment (T-6.3), not assumed.
 
 ### 20.2 Environment variables
 
