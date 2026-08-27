@@ -233,30 +233,81 @@ describe.skipIf(!hasDatabase)("login (FR-2.2, S-5)", () => {
 
   /**
    * Timing comparisons use the *minimum* of many samples rather than a median.
-   * The minimum approximates the work with the scheduler noise removed, so it
-   * is stable on a loaded CI runner where a median wanders. The bound is a
-   * ratio, not a millisecond figure: an absolute bound has to be chosen
-   * relative to one argon2 verify (~40ms here), and a 50ms budget therefore
-   * fails to reject an 8x separation — which is how the original version of
-   * this test passed with the leak it names still present.
+   * The minimum approximates the work with the scheduler noise removed, and
+   * the bound is a ratio rather than a millisecond figure: an absolute bound
+   * has to be chosen relative to one argon2 verify, so a 50ms budget fails to
+   * reject an 8x separation — which is how the original version of this test
+   * passed with the leak it names still present.
+   *
+   * The sample count and the bound are both measured rather than chosen.
+   *
+   * This test spent a while measuring nothing. The auth rate limit added at
+   * T-6.4 — 20 per address per fifteen minutes — answered most of each batch
+   * with 429 before any hashing happened, so the minimum of the batch was the
+   * fastest refusal and both arms compared two identical 429s. Measured
+   * directly: thirty logins from one address returned {"401": 20, "429": 10}.
+   * With the limiter in the way, deleting the constant-time defence outright
+   * left all 27 tests green.
+   *
+   * Sampling from a distinct address per request restores the measurement, and
+   * the numbers become the ones `crypto.ts` describes: ~44ms per arm, against
+   * ~9ms when the defence is removed. The observed floor across five runs is
+   * 1.00–1.12 — two arms doing the same work, where a millisecond of jitter is
+   * a 2% swing rather than the 20% it was when both were timing a refusal.
+   *
+   * So the bound stays at 1.5, and that is the point: it was never too tight.
+   * Raising it would have been the change that keeps the test green while
+   * removing what it detects (P-28). With the leak reintroduced the ratio is
+   * 4.7, so 1.5 sits 1.3x above the noise and 3.1x below the signal.
    */
+  const TIMING_BOUND = 1.5
   async function timingRatio(
     app: Parameters<typeof request>[0],
     a: { phone: string; password: string },
     b: { phone: string; password: string },
-    samples = 12,
+    samples = 15,
   ) {
     const timesA: number[] = []
     const timesB: number[] = []
 
+    /*
+     * Every sample comes from its own address.
+     *
+     * Without this the auth rate limit — 20 per IP per fifteen minutes, added
+     * at T-6.4 — answers most of the batch with 429 before any hashing
+     * happens. The minimum of the batch is then the fastest 429, so both arms
+     * measure the limiter rather than the login, and the comparison is between
+     * two identical refusals. Measured directly: thirty logins from one
+     * address returned {"401": 20, "429": 10}.
+     *
+     * That is why this test stopped detecting anything. It is not a
+     * hypothetical: with the limiter in place, deleting the constant-time
+     * defence entirely left all 27 tests green.
+     */
+    let address = 0
+    const from = () =>
+      request(app)
+        .post("/api/auth/login")
+        .set(
+          "x-forwarded-for",
+          `10.${(++address >> 16) & 255}.${(address >> 8) & 255}.${address & 255}`,
+        )
+
+    // Discarded. The first requests pay for lazy imports, a cold connection
+    // and an unwarmed JIT, and they land in whichever arm goes first.
+    for (let warmUp = 0; warmUp < 3; warmUp++) {
+      await from().send(a)
+      await from().send(b)
+    }
+
     for (let i = 0; i < samples; i++) {
       // Interleaved, so a drift in machine load hits both arms equally.
       const startedA = performance.now()
-      await request(app).post("/api/auth/login").send(a)
+      await from().send(a)
       timesA.push(performance.now() - startedA)
 
       const startedB = performance.now()
-      await request(app).post("/api/auth/login").send(b)
+      await from().send(b)
       timesB.push(performance.now() - startedB)
     }
 
@@ -284,7 +335,10 @@ describe.skipIf(!hasDatabase)("login (FR-2.2, S-5)", () => {
     })
 
     const { a, b, ratio } = await timingRatio(app, unknownArm, wrongArm)
-    expect(ratio, `unknown ${a.toFixed(1)}ms vs wrong-password ${b.toFixed(1)}ms`).toBeLessThan(1.5)
+    expect(
+      ratio,
+      `unknown ${a.toFixed(1)}ms vs wrong-password ${b.toFixed(1)}ms — ratio ${ratio.toFixed(2)}`,
+    ).toBeLessThan(TIMING_BOUND)
   })
 
   it("the SYSTEM account is not identifiable by how fast it fails", async () => {
@@ -300,7 +354,10 @@ describe.skipIf(!hasDatabase)("login (FR-2.2, S-5)", () => {
       { phone: uniquePhone(), password: PASSWORD },
     )
 
-    expect(ratio, `system ${a.toFixed(1)}ms vs unknown ${b.toFixed(1)}ms`).toBeLessThan(1.5)
+    expect(
+      ratio,
+      `system ${a.toFixed(1)}ms vs unknown ${b.toFixed(1)}ms — ratio ${ratio.toFixed(2)}`,
+    ).toBeLessThan(TIMING_BOUND)
   })
 
   it("records an attempt whether or not the number is registered", async () => {
