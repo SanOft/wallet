@@ -89,6 +89,28 @@ export function corsPolicy(env: Env): RequestHandler {
 }
 
 /**
+ * `Cache-Control: no-store` on everything this service returns.
+ *
+ * Nothing here is cacheable: a balance, a transfer and a token are all specific
+ * to one caller at one moment. The header is not a micro-optimisation in
+ * reverse — it is the control that stops a shared cache from serving one user's
+ * balance to another.
+ *
+ * It matters more since the deploy topology put a CDN in front (ADR-0009).
+ * Vercel honours upstream cache headers on external rewrites by default for
+ * projects created on or after 6 April 2026, so "the API sends no cache header"
+ * stopped being a safe default the moment the proxy existed. `vercel.json`
+ * disables that caching too; either alone is sufficient, which is the point —
+ * the failure mode is bad enough to be worth two independent stops.
+ */
+export function noStore(): RequestHandler {
+  return (_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store")
+    next()
+  }
+}
+
+/**
  * `Vary: Origin` on every response, not only the ones CORS decorated.
  *
  * A refused origin gets no `Access-Control-*` headers, and `cors` returns

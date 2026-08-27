@@ -22,6 +22,7 @@ one most often needed.
 | [0006](0006-two-isolation-strategies.md) | Serializable for transfers, advisory lock for top-ups | Accepted — day 5 |
 | [0007](0007-sse-for-live-balance.md) | Server-sent events for live balance | Proposed |
 | [0008](0008-frontend-architecture.md) | Frontend architecture | Proposed |
+| [0009](0009-api-behind-the-web-origin.md) | The API is served through the web origin, not beside it | Accepted — day 6 |
 
 **Accepted** means the code does this today. **Proposed** means the decision is
 recorded before the work, so the reasoning is available when it starts — and so

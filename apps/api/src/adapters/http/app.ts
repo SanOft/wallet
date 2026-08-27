@@ -17,6 +17,7 @@ import {
   authRateLimit,
   corsPolicy,
   globalRateLimit,
+  noStore,
   securityHeaders,
   terminatePreflight,
   varyOrigin,
@@ -80,6 +81,7 @@ export function createApp({
   // Before anything that reads the request: the headers belong on every
   // response including the error ones.
   app.use(securityHeaders())
+  app.use(noStore())
   app.use(varyOrigin())
 
   // Ahead of CORS, deliberately. `cors` answers an allowed preflight itself and

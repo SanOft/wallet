@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { readFileSync } from "node:fs"
 import { apiErrorSchema } from "@wallet/shared"
 import request from "supertest"
 import { describe, expect, it } from "vitest"
@@ -42,6 +43,23 @@ describe("security headers (§17.1, §17.3)", () => {
 
     expect(res.headers["x-frame-options"]?.toLowerCase()).toBe("deny")
     expect(res.headers["referrer-policy"]).toBe("no-referrer")
+  })
+
+  it("forbids every cache from storing a response", async () => {
+    // A CDN sits in front of this service (ADR-0009), and Vercel honours
+    // upstream cache headers on external rewrites by default. A cached
+    // `GET /api/accounts` is one user's balance shown to another.
+    const res = await request(app()).get("/health")
+    expect(res.headers["cache-control"]).toBe("no-store")
+  })
+
+  it("forbids it on an authenticated route and on an error too", async () => {
+    const missing = await request(app()).get("/api/accounts")
+    expect(missing.status).toBe(401)
+    expect(missing.headers["cache-control"]).toBe("no-store")
+
+    const notFound = await request(app()).get("/api/does-not-exist")
+    expect(notFound.headers["cache-control"]).toBe("no-store")
   })
 
   it("does not advertise the framework", async () => {
@@ -150,6 +168,38 @@ describe("CORS is an allowlist, never a wildcard (NFR-1.8)", () => {
     // treating it as such is how an API ends up believed to be protected.
     const res = await request(app({ CORS_ORIGINS: ORIGIN })).get("/health")
     expect(res.status).toBe(200)
+  })
+})
+
+describe("the deploy topology the cookie policy depends on (ADR-0009)", () => {
+  /*
+   * These assertions are about a file in another workspace, and they live here
+   * because this is the workspace they protect. `SameSite=Strict` on the
+   * refresh cookie only works while the PWA and the API share an origin, and
+   * that is true only because of the rewrite below. Delete the rewrite and
+   * every session silently stops renewing — in production, not in any test that
+   * uses supertest against one host.
+   */
+  const config = JSON.parse(
+    readFileSync(new URL("../../web/vercel.json", import.meta.url), "utf8"),
+  ) as {
+    rewrites?: { source: string; destination: string }[]
+    headers?: { source: string; headers: { key: string; value: string }[] }[]
+  }
+
+  it("routes /api through the web origin", () => {
+    const rewrite = config.rewrites?.find((r) => r.source.startsWith("/api"))
+    expect(rewrite, "no /api rewrite — the refresh cookie cannot work").toBeDefined()
+    expect(rewrite?.destination).toMatch(/^https:\/\//)
+  })
+
+  it("keeps the CDN from storing anything the API returns", () => {
+    // Vercel honours upstream cache headers on external rewrites by default for
+    // projects created on or after 6 April 2026. The API also sends no-store;
+    // both exist because one silent failure here leaks a balance across users.
+    const rule = config.headers?.find((h) => h.source.startsWith("/api"))
+    const disabled = rule?.headers.find((h) => h.key === "x-vercel-enable-rewrite-caching")
+    expect(disabled?.value).toBe("0")
   })
 })
 
