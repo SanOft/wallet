@@ -22,15 +22,25 @@ enforces — the contract cannot drift, because there is only one copy.
 
 ```
 src/
-├── app/          store, router, providers
+├── app/          shell, router, providers, store
+├── screens/      route targets — thin, composed from features
 ├── features/
-│   ├── auth/     screens, slice, api hooks, tests
+│   ├── auth/     slice, api hooks, forms, tests
 │   ├── transfer/ the four-step wizard
 │   ├── history/  list, filters, detail
 │   └── outbox/   the offline queue
 ├── components/   design-system primitives only
 └── lib/          formatting, hooks with no feature knowledge
 ```
+
+`screens/` was added when F0 landed, and is worth defending because it looks
+like the layer-first thinking this record rejects. A route target is not a
+feature: Home shows a balance, a rates widget and recent transactions, which
+are three features and will be three imports. Putting it inside any one of them
+would be arbitrary, and putting it in `app/` would mix routing with content.
+The rule that keeps it honest is that a file here holds composition and layout
+only — the moment a screen grows logic of its own, that logic belongs to a
+feature.
 
 A folder per feature keeps a change to the wizard inside one directory. The
 layer-first alternative — `components/`, `hooks/`, `slices/`, `pages/` — spreads

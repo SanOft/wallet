@@ -1,0 +1,186 @@
+@import "tailwindcss";
+
+/*
+ * The token system, spec §13.2. Three layers, and the rule that gives them
+ * their value: a component may use layer 2 and nothing else.
+ *
+ * Layer 1 — primitives. Raw values with no meaning. Never referenced by a
+ *   component, and never changed by a theme.
+ * Layer 2 — semantic. What the application actually uses. Declared inside
+ *   `@theme` so Tailwind emits both the custom property and the matching
+ *   utility, with each value pointing at a primitive.
+ * Layer 3 — component. Only where a component genuinely needs its own knob.
+ *
+ * Why `@theme` and not `@theme inline`: `inline` resolves the reference where
+ * the token is defined, so `bg-primary` would compile to `var(--blue-700)` and
+ * dark mode could only be expressed by changing that primitive — which is
+ * precisely what layer 1 exists to prevent. Without `inline`, the utility
+ * compiles to `var(--color-primary)`, so re-declaring layer 2 under a dark
+ * selector is enough. §13.2 says dark mode "is nothing more than re-declaring
+ * layer 2"; this is the directive that makes that literally true.
+ */
+
+/* ── Layer 1: primitives ─────────────────────────────────────────────────
+ *
+ * A placeholder ramp, and §13.2.2 says so: the brand decision is separate.
+ * What matters is that whichever hex is chosen enters through layer 2's table
+ * with its contrast computed, not through a component.
+ */
+:root {
+  --gray-25: #ffffff;
+  --gray-50: #f9fafb;
+  --gray-100: #f0f4f8;
+  --gray-400: #98a2b3;
+  --gray-450: #85888e;
+  --gray-500: #667085;
+  --gray-600: #475467;
+  --gray-850: #161b26;
+  --gray-900: #101828;
+  --gray-950: #0c111d;
+
+  --blue-300: #84adff;
+  --blue-700: #175cd3;
+  --green-400: #47cd89;
+  --green-700: #067647;
+  --red-400: #f97066;
+  --red-700: #b42318;
+  --amber-400: #fdb022;
+  --amber-700: #b54708;
+}
+
+/* ── Layer 2: semantic, light ─────────────────────────────────────────────
+ *
+ * Every background has an `on-` counterpart, following the Stripe pattern
+ * §13.2.2 cites, so a component never has to guess which text colour will work
+ * on it. Contrast for each pair is verified in CI against the WCAG 2.1 formula
+ * — see `test/contrast.test.ts`, which reads this file rather than a copy.
+ */
+@theme {
+  --color-background: var(--gray-25);
+  --color-surface-sunken: var(--gray-50);
+  --color-text: var(--gray-900);
+  --color-text-secondary: var(--gray-600);
+  --color-primary: var(--blue-700);
+  --color-on-primary: var(--gray-25);
+  --color-success: var(--green-700);
+  --color-danger: var(--red-700);
+  --color-warning: var(--amber-700);
+  --color-neutral: var(--gray-500);
+
+  /* §13.2.3 — fluid type, 1.2 at 360px over a 16px base to 1.25 at 1280px
+   * over 18px. The browser interpolates; nothing jumps at a breakpoint. */
+  --text-step--1: clamp(13.33px, 12.92px + 0.116vw, 14.4px);
+  --text-step-0: clamp(16px, 15.22px + 0.217vw, 18px);
+  --text-step-1: clamp(19.2px, 17.91px + 0.359vw, 22.5px);
+  --text-step-2: clamp(23.04px, 21.05px + 0.553vw, 28.12px);
+  --text-step-3: clamp(27.65px, 24.71px + 0.816vw, 35.16px);
+  --text-step-4: clamp(33.18px, 28.96px + 1.17vw, 43.95px);
+
+  /* Paired with the type scale, same method, same two anchors. */
+  --spacing-3xs: clamp(4px, 3.804px + 0.054vw, 4.5px);
+  --spacing-2xs: clamp(8px, 7.609px + 0.109vw, 9px);
+  --spacing-xs: clamp(12px, 11.413px + 0.163vw, 13.5px);
+  --spacing-s: clamp(16px, 15.217px + 0.217vw, 18px);
+  --spacing-m: clamp(24px, 22.826px + 0.326vw, 27px);
+  --spacing-l: clamp(32px, 30.435px + 0.435vw, 36px);
+  --spacing-xl: clamp(48px, 45.652px + 0.652vw, 54px);
+  --spacing-2xl: clamp(64px, 60.87px + 0.87vw, 72px);
+
+  /* §13.2.4 */
+  --font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --radius-card: 12px;
+  --radius-control: 8px;
+}
+
+/* ── Layer 2: semantic, dark ──────────────────────────────────────────────
+ *
+ * The same names, different primitives. Two selectors rather than one: the
+ * media query follows the operating system, and the attribute lets a user
+ * override it in either direction. `:not([data-theme="light"])` is what stops
+ * the system preference from winning over an explicit choice.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-background: var(--gray-950);
+    --color-surface-sunken: var(--gray-850);
+    --color-text: var(--gray-100);
+    --color-text-secondary: var(--gray-400);
+    --color-primary: var(--blue-300);
+    --color-on-primary: var(--gray-950);
+    --color-success: var(--green-400);
+    --color-danger: var(--red-400);
+    --color-warning: var(--amber-400);
+    --color-neutral: var(--gray-450);
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-background: var(--gray-950);
+  --color-surface-sunken: var(--gray-850);
+  --color-text: var(--gray-100);
+  --color-text-secondary: var(--gray-400);
+  --color-primary: var(--blue-300);
+  --color-on-primary: var(--gray-950);
+  --color-success: var(--green-400);
+  --color-danger: var(--red-400);
+  --color-warning: var(--amber-400);
+  --color-neutral: var(--gray-450);
+}
+
+/* ── Layer 3: component ───────────────────────────────────────────────────
+ *
+ * Deliberately short. A token here earns its place by being needed in more
+ * than one component and meaning nothing at layer 2.
+ */
+:root {
+  /* NFR-3: the touch area stays this size even when the icon inside is
+   * smaller. Apple and WCAG 2.5.5 both land near this number. */
+  --touch-target-min: 44px;
+
+  /* The notch and the home indicator. Zero on anything that has neither, so
+   * these are safe to add unconditionally. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────*/
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-step-0);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+
+  /* §13.2.4: `dvh`, not `vh`, so the layout does not jump when a mobile
+   * browser collapses its URL bar. */
+  min-height: 100dvh;
+}
+
+/* Amounts are read in columns and compared down the column, so the digits have
+ * to be the same width. §13.2.4 puts this on every amount. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* NFR-4: a visible focus ring, and one that survives a dark background. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
