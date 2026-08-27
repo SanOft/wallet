@@ -1,4 +1,5 @@
 import { ThemeToggle } from "../app/ThemeToggle.js"
+import { FormShowcase } from "./FormShowcase.js"
 
 /**
  * F0's Home is the design system itself.
@@ -110,6 +111,8 @@ export function Home() {
           ))}
         </ul>
       </section>
+
+      <FormShowcase />
 
       <section aria-labelledby="money-heading" className="flex flex-col gap-2xs">
         <h2 id="money-heading" className="m-0 text-step-1">
