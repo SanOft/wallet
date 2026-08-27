@@ -187,11 +187,22 @@ model AuthAttempt {
   /// and classified numbers at 80% accuracy — an enumeration oracle against
   /// FR-2.2 and NFR-1.2. §11.2 draws this write unconditionally.
   userId    String?  @db.Uuid
+  /// Keyed digest of the number the attempt named, registered or not (FR-2.3).
+  ///
+  /// The backoff counts against this rather than against `userId`, because a
+  /// counter that only exists for registered numbers turns the fourth attempt
+  /// into a membership oracle: 429 for a customer, 401 for a stranger. Keyed
+  /// rather than plain, because this column would otherwise be a list of the
+  /// phone numbers people tried — a nine-digit space that a bare hash does not
+  /// hide. Empty on rows written before the backoff existed.
+  subject   String   @default("")
   succeeded Boolean
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  /// The backoff reads the recent attempts for one subject, newest first.
+  @@index([subject, createdAt])
   @@map("auth_attempts")
 }

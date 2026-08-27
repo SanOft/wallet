@@ -288,7 +288,7 @@ These block merge. Each is written on the day shown:
 
 ## 4. Deferred to September
 
-Lockout / step-up hardening · history endpoint with filters · exchange rates · **the entire frontend** (F0–F7) · USSD adapter · PWA offline + outbox · SSE live balance · Storybook · the ADR-0003 comparison lab.
+Step-up hardening · history endpoint with filters · exchange rates · **the entire frontend** (F0–F7) · USSD adapter · PWA offline + outbox · SSE live balance · Storybook · the ADR-0003 comparison lab.
 
 ---
 

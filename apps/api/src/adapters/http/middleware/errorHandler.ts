@@ -8,7 +8,7 @@ import {
 } from "@wallet/shared"
 import type { ErrorRequestHandler, RequestHandler } from "express"
 import * as z from "zod"
-import { isDomainError } from "../../../domain/errors.js"
+import { AccountLockedError, isDomainError } from "../../../domain/errors.js"
 import type { Logger } from "../../../infra/logger.js"
 
 /**
@@ -160,6 +160,17 @@ export function createErrorHandler(log: Logger): ErrorRequestHandler {
       code = err.code
       message = err.message || FALLBACK_MESSAGE[err.code]
       details = err.details ? [...err.details] : undefined
+
+      /*
+       * §12.3 pairs AUTH_LOCKED with a Retry-After header, and the client
+       * renders "try again in X minutes" from it. Read off the error rather
+       * than recomputed here, so the header and whatever the body says cannot
+       * drift apart — and set before the body, because a header written after
+       * the response has been sent is silently dropped.
+       */
+      if (err instanceof AccountLockedError) {
+        res.setHeader("Retry-After", String(err.retryAfterSeconds))
+      }
     } else {
       // Anything unrecognised is ours, not the caller's. The cause is logged
       // through the allowlisting error serializer and the response says nothing

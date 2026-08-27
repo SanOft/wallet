@@ -6,7 +6,7 @@ import request from "supertest"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
 import { REFRESH_COOKIE } from "../src/adapters/http/cookies.js"
-import { hashRefreshToken, hashSecret, verifySecret } from "../src/infra/crypto.js"
+import { attemptSubject, hashRefreshToken, hashSecret, verifySecret } from "../src/infra/crypto.js"
 import { createTokenService } from "../src/infra/jwt.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
 import { buildApp, testEnv } from "./helpers.js"
@@ -293,14 +293,35 @@ describe.skipIf(!hasDatabase)("login (FR-2.2, S-5)", () => {
           `10.${(++address >> 16) & 255}.${(address >> 8) & 255}.${address & 255}`,
         )
 
+    /*
+     * FR-2.3's backoff also has to be kept out of the way, and for the same
+     * reason as the rate limit: it answers from the fourth attempt onwards
+     * without hashing, so the batch goes back to timing refusals. Measured on
+     * a fresh number, twenty attempts returned {"401": 3, "429": 17}.
+     *
+     * Cleared between samples rather than disabled, so the code under test is
+     * the code that ships. Outside the timed region, and equal for both arms.
+     */
+    // The same secret the app under test was built with. `testEnv()` spreads
+    // its overrides last, so `buildApp(prisma, { ...process.env })` uses the
+    // JWT_SECRET from the environment — not the generated one — and a subject
+    // computed from the wrong key silently deletes nothing.
+    const pepper = testEnv({ ...process.env }).JWT_SECRET
+    const subjects = [attemptSubject(a.phone, pepper), attemptSubject(b.phone, pepper)]
+    const clearBackoff = () =>
+      prisma.authAttempt.deleteMany({ where: { subject: { in: subjects } } })
+
     // Discarded. The first requests pay for lazy imports, a cold connection
     // and an unwarmed JIT, and they land in whichever arm goes first.
     for (let warmUp = 0; warmUp < 3; warmUp++) {
+      await clearBackoff()
       await from().send(a)
       await from().send(b)
     }
 
     for (let i = 0; i < samples; i++) {
+      await clearBackoff()
+
       // Interleaved, so a drift in machine load hits both arms equally.
       const startedA = performance.now()
       await from().send(a)
@@ -542,5 +563,158 @@ describe.skipIf(!hasDatabase)("GET /api/me (§12.1)", () => {
       expect(res.status).toBe(401)
       expect(res.body.error.code).toBe("AUTH_TOKEN_EXPIRED")
     }
+  })
+})
+
+describe.skipIf(!hasDatabase)("FR-2.3 — per-account backoff", () => {
+  let prisma: PrismaClient
+
+  beforeAll(() => {
+    prisma = createPrismaClient(testEnv({ ...process.env }))
+  })
+  afterAll(async () => {
+    await prisma.$disconnect()
+  })
+
+  const PEPPER = () => testEnv({ ...process.env }).JWT_SECRET
+
+  function app() {
+    return buildApp(prisma, { ...process.env }).app
+  }
+
+  /** Distinct addresses, so the IP rate limit never answers instead. */
+  let address = 0
+  function attempt(instance: ReturnType<typeof app>, phone: string, password: string) {
+    address += 1
+    return request(instance)
+      .post("/api/auth/login")
+      .set("x-forwarded-for", `10.9.${(address >> 8) & 255}.${address & 255}`)
+      .send({ phone, password })
+  }
+
+  async function failTimes(instance: ReturnType<typeof app>, phone: string, times: number) {
+    const statuses: number[] = []
+    for (let i = 0; i < times; i++) {
+      statuses.push((await attempt(instance, phone, "definitely-not-the-password")).status)
+    }
+    return statuses
+  }
+
+  /** Moves the recorded failures into the past, which is what waiting does. */
+  async function ageAttempts(phone: string, seconds: number) {
+    await prisma.$executeRaw`
+      UPDATE "auth_attempts"
+         SET "createdAt" = "createdAt" - make_interval(secs => ${seconds}::double precision)
+       WHERE "subject" = ${attemptSubject(phone, PEPPER())}
+    `
+  }
+
+  it("lets three failures through and refuses the fourth", async () => {
+    const instance = app()
+    const phone = uniquePhone()
+
+    const first = await failTimes(instance, phone, 3)
+    expect(first, "three failures are free (FR-2.3)").toEqual([401, 401, 401])
+
+    const fourth = await attempt(instance, phone, "definitely-not-the-password")
+    expect(fourth.status).toBe(429)
+    expect(fourth.body.error.code).toBe("AUTH_LOCKED")
+  })
+
+  it("names the wait in a header the client can read", async () => {
+    const instance = app()
+    const phone = uniquePhone()
+    await failTimes(instance, phone, 3)
+
+    const locked = await attempt(instance, phone, "definitely-not-the-password")
+
+    // §12.3 renders "try again in X minutes" from this. Without it the client
+    // has to guess, and guessing means either hammering or over-waiting.
+    expect(Number(locked.headers["retry-after"])).toBeGreaterThan(0)
+    expect(Number(locked.headers["retry-after"])).toBeLessThanOrEqual(1)
+  })
+
+  it("doubles the wait with each further failure", async () => {
+    const instance = app()
+    const phone = uniquePhone()
+    await failTimes(instance, phone, 3)
+
+    // Wait out the first second, fail again, and the next wait is two.
+    await ageAttempts(phone, 2)
+    const fourth = await attempt(instance, phone, "definitely-not-the-password")
+    expect(fourth.status, "the delay had elapsed").toBe(401)
+
+    const fifth = await attempt(instance, phone, "definitely-not-the-password")
+    expect(fifth.status).toBe(429)
+    expect(Number(fifth.headers["retry-after"])).toBe(2)
+  })
+
+  it("stops growing at fifteen minutes", async () => {
+    const instance = app()
+    const phone = uniquePhone()
+
+    // Twenty failures would ask for 2^17 seconds — a day and a half — if the
+    // cap were missing, which locks the real owner out far longer than it
+    // inconveniences anyone.
+    for (let i = 0; i < 20; i++) {
+      await ageAttempts(phone, 3600)
+      await attempt(instance, phone, "definitely-not-the-password")
+    }
+
+    const locked = await attempt(instance, phone, "definitely-not-the-password")
+    expect(locked.status).toBe(429)
+    expect(Number(locked.headers["retry-after"])).toBeLessThanOrEqual(15 * 60)
+  })
+
+  it("forgets the failures once someone signs in", async () => {
+    const instance = app()
+    const phone = uniquePhone()
+    const password = PASSWORD
+
+    const registered = await request(instance)
+      .post("/api/auth/register")
+      .set("x-forwarded-for", "10.9.200.1")
+      .send({ phone, firstName: "Back", lastName: "Off", password })
+    expect(registered.status).toBe(201)
+
+    await failTimes(instance, phone, 3)
+    await ageAttempts(phone, 2)
+
+    const good = await attempt(instance, phone, password)
+    expect(good.status).toBe(200)
+
+    // Counted as consecutive failures since the last success, so proving who
+    // you are clears the penalty rather than leaving it to expire.
+    const after = await failTimes(instance, phone, 3)
+    expect(after).toEqual([401, 401, 401])
+  })
+
+  it("backs off an unregistered number on the same schedule", async () => {
+    /*
+     * The property this whole design exists for.
+     *
+     * A backoff that only applies to real accounts answers the fourth attempt
+     * with 429 for a customer and 401 for a stranger — a membership oracle,
+     * and a cheaper one than the ~6ms timing difference and the extra INSERT
+     * that FR-2.2 and S-5 were written to close.
+     */
+    const instance = app()
+    const stranger = uniquePhone()
+
+    const known = uniquePhone()
+    await request(instance)
+      .post("/api/auth/register")
+      .set("x-forwarded-for", "10.9.201.1")
+      .send({ phone: known, firstName: "Known", lastName: "User", password: PASSWORD })
+
+    await failTimes(instance, stranger, 3)
+    await failTimes(instance, known, 3)
+
+    const strangerLocked = await attempt(instance, stranger, "nope")
+    const knownLocked = await attempt(instance, known, "nope")
+
+    expect(strangerLocked.status).toBe(knownLocked.status)
+    expect(strangerLocked.status).toBe(429)
+    expect(strangerLocked.body.error.code).toBe(knownLocked.body.error.code)
   })
 })

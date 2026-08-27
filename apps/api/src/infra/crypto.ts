@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto"
+import { createHash, createHmac, randomBytes } from "node:crypto"
 import argon2 from "argon2"
 
 /**
@@ -89,4 +89,29 @@ export function generateRefreshToken(): string {
  */
 export function hashRefreshToken(token: string): string {
   return createHash("sha256").update(token).digest("base64url")
+}
+
+/**
+ * What FR-2.3's backoff counts against: a keyed digest of the number someone
+ * tried to sign in as, whether or not it belongs to anyone.
+ *
+ * It has to cover unregistered numbers. Counting only registered ones means an
+ * unknown number never backs off, so the fourth attempt answers `429` for a
+ * customer and `401` for a stranger — a membership oracle that would undo
+ * everything FR-2.2 and S-5 exist for, and a louder one than the timing leak
+ * they were written against.
+ *
+ * Keyed rather than plain: `auth_attempts` records every attempt, including
+ * numbers belonging to nobody, so the column becomes a list of numbers somebody
+ * tried. A national number is nine digits — a bare SHA-256 of that space is
+ * enumerable on a laptop, which would make the column the phone number with
+ * extra steps.
+ *
+ * The prefix is domain separation. `JWT_SECRET` also signs access tokens, and
+ * two uses of one key must not be able to produce each other's inputs. Rotating
+ * the secret resets every counter, which is an acceptable — arguably desirable
+ * — consequence.
+ */
+export function attemptSubject(phone: string, secret: string): string {
+  return createHmac("sha256", secret).update(`auth-attempt:v1:${phone}`).digest("base64url")
 }
