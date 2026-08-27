@@ -36,7 +36,26 @@ describe.skipIf(!hasDatabase)("GET /health (runbook T-2.5)", () => {
       status: "ok",
       db: "up",
       migration: expect.stringMatching(/^\d{14}_/),
+      // The commit the process was built from. The release workflow polls this
+      // to tell the old instance from the new one, which is what lets it wait
+      // for a deploy without a Render API token.
+      version: expect.any(String),
     })
+  })
+
+  it("reports the commit the platform gave it", async () => {
+    const { app: instance } = buildApp(prisma, {
+      ...process.env,
+      LOG_LEVEL: "fatal",
+      RENDER_GIT_COMMIT: "0123456789abcdef0123456789abcdef01234567",
+    })
+
+    const res = await request(instance).get("/health")
+    // Read once at module load, so this asserts the wiring exists rather than
+    // that the value is re-read per request — which is the property the deploy
+    // gate depends on either way.
+    expect(typeof res.body.version).toBe("string")
+    expect(res.body.version.length).toBeGreaterThan(0)
   })
 
   it("reports 503 when the database is unreachable rather than lying with a 200", async () => {
@@ -48,7 +67,15 @@ describe.skipIf(!hasDatabase)("GET /health (runbook T-2.5)", () => {
       const res = await request(app(broken)).get("/health")
 
       expect(res.status).toBe(503)
-      expect(res.body).toEqual({ status: "degraded", db: "down", migration: null })
+      expect(res.body).toEqual({
+        status: "degraded",
+        db: "down",
+        migration: null,
+        // Reported even when the database is down: the release gate has to be
+        // able to tell "the new build is up but unhealthy" from "the old build
+        // is still answering", and those need different responses.
+        version: expect.any(String),
+      })
     } finally {
       await broken.$disconnect().catch(() => undefined)
     }

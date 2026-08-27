@@ -1,0 +1,132 @@
+name: Deploy
+
+# Runs after CI succeeds on main, never on the push itself.
+#
+# The ordering matters more than it looks: a migration is the one step that
+# cannot be rolled back by redeploying, so it must never run from a commit whose
+# tests failed. `workflow_run` gives that guarantee; a plain `push` trigger would
+# race CI and could migrate production from a red build.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+# One deploy at a time. Two overlapping runs would race the same database and
+# the same service, and `cancel-in-progress` is deliberately off — cancelling a
+# half-applied migration is worse than queueing behind it.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # §19.1: schema first, then the code that depends on it. Prisma's forward-only
+  # migrations mean the old API can run against the new schema for the length of
+  # the deploy window; the reverse is not true.
+  migrate:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The exact commit CI approved, not whatever main points at now.
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: yarn install --immutable
+
+      - name: fail early if the deploy is not configured
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          PRODUCTION_URL: ${{ secrets.PRODUCTION_URL }}
+        run: |
+          missing=""
+          [ -z "$DATABASE_URL" ] && missing="$missing DATABASE_URL"
+          [ -z "$RENDER_DEPLOY_HOOK_URL" ] && missing="$missing RENDER_DEPLOY_HOOK_URL"
+          [ -z "$PRODUCTION_URL" ] && missing="$missing PRODUCTION_URL"
+          if [ -n "$missing" ]; then
+            echo "Missing repository secrets:$missing"
+            echo "Set them under Settings → Secrets and variables → Actions (runbook T-6.1)."
+            exit 1
+          fi
+
+      - run: yarn workspace @wallet/api exec prisma generate
+
+      # `migrate deploy` applies committed migrations and never authors one,
+      # which is what a non-interactive environment needs.
+      - name: apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: yarn workspace @wallet/api exec prisma migrate deploy
+
+  release:
+    needs: migrate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # A deploy hook takes a plain GET or POST and answers 200 with the new
+      # deploy's id, or 202 when it is queued.
+      - name: trigger the deploy
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          code=$(curl -sS -o /tmp/hook.json -w '%{http_code}' -X POST "$HOOK")
+          echo "deploy hook: HTTP $code"
+          if [ "$code" != "200" ] && [ "$code" != "202" ]; then
+            echo "hook refused the request"; cat /tmp/hook.json; exit 1
+          fi
+
+      # Waits for the new build to answer, rather than sleeping and hoping.
+      #
+      # `/health` reports the commit it was built from (RENDER_GIT_COMMIT), so
+      # "the deploy finished" is a fact this workflow can check without a Render
+      # API token. The free tier also cold-starts, so the budget is generous:
+      # the first response can take the better part of a minute.
+      - name: wait for the new commit to be live
+        env:
+          BASE: ${{ secrets.PRODUCTION_URL }}
+          WANT: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          for attempt in $(seq 1 60); do
+            got=$(curl -sS --max-time 20 "${BASE%/}/health" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+            if [ "$got" = "$WANT" ]; then
+              echo "live: ${got:0:7} after ${attempt} checks"; exit 0
+            fi
+            echo "attempt ${attempt}: serving ${got:-<no answer>}"
+            sleep 10
+          done
+          echo "the deployed commit never became live within 10 minutes"
+          exit 1
+
+  smoke:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: yarn install --immutable
+
+      # T-6.3: health, register, login and a transfer that completes. A deploy
+      # that boots but cannot move money is a failed deploy.
+      - name: production smoke
+        env:
+          SMOKE_BASE_URL: ${{ secrets.PRODUCTION_URL }}
+          SMOKE_EXPECTED_VERSION: ${{ github.event.workflow_run.head_sha }}
+        run: yarn workspace @wallet/api smoke

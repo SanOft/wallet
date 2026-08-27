@@ -212,6 +212,47 @@ Every task carries: **ID · what · files · acceptance criteria**. Each day end
 | T-6.5 | README: architecture diagram, how to run, links to spec | `README.md` | A stranger can run it in 5 minutes |
 | T-6.6 | ADRs 0001–0006, plus 0007 (SSE) and 0008 (FE architecture) | `docs/adr/` | One page each |
 
+#### T-6.1 — what has to be done by hand
+
+The pipeline is written and cannot run until these exist. Everything else in
+Day 6 is automated.
+
+**Neon.** Create a project and a database. Copy the pooled connection string.
+
+**Render.** Create a Web Service from this repository.
+
+| Setting | Value |
+|---|---|
+| Build command | `corepack enable && yarn install --immutable && yarn build` |
+| Start command | `yarn workspace @wallet/api start` |
+| Health check path | `/health` |
+| Auto-Deploy | **Off** |
+
+Auto-Deploy must be off. With it on, Render redeploys the moment `main` moves,
+which races the migration job and can start the new code against the old schema
+— the one ordering §19.1 exists to prevent.
+
+Environment variables on the service: `DATABASE_URL`, `JWT_SECRET` (32+ chars,
+generate it), `CORS_ORIGINS` (the Vercel origin), `NODE_ENV=production`. `PORT`
+is supplied by Render. Leave `REFRESH_COOKIE_DOMAIN` unset (ADR-0009).
+
+**Vercel.** Import the repository with `apps/web` as the root. Then set the
+rewrite destination in `apps/web/vercel.json` to the Render URL — it ships as
+`https://set-me-at-t-6-1.invalid/...` on purpose, so a forgotten step fails
+loudly instead of routing `/api` somewhere unintended.
+
+**GitHub secrets** (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `DATABASE_URL` | The Neon string, for the migration job |
+| `RENDER_DEPLOY_HOOK_URL` | Render → service → Settings → Deploy Hook |
+| `PRODUCTION_URL` | The Vercel origin, e.g. `https://wallet.vercel.app` |
+
+`PRODUCTION_URL` is the *web* origin, not the Render one: the smoke test has to
+exercise the path a browser takes, including the rewrite, or it proves nothing
+about the deployment users will meet.
+
 **Outcome:** live API, green CI, documented repo.
 
 ---
