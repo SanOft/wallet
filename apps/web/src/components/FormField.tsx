@@ -1,3 +1,4 @@
+import { TriangleAlert } from "lucide-react"
 import type { ReactNode } from "react"
 import { useId } from "react"
 
@@ -61,7 +62,11 @@ export function FormField(props: {
           // the user is still standing in.
           role="status"
         >
-          <span aria-hidden="true">⚠</span>
+          {/* Hidden from assistive technology on purpose: the sentence beside
+              it already says what is wrong, and announcing "warning triangle"
+              first only delays reaching it. The icon exists for the reader who
+              cannot rely on the colour. */}
+          <TriangleAlert size={16} aria-hidden={true} className="mt-3xs shrink-0" />
           <span>{props.error}</span>
         </p>
       ) : null}

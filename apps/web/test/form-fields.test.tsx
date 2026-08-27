@@ -240,14 +240,18 @@ describe("FormField wires the parts together (§13.8.2)", () => {
   })
 
   it("marks the error with more than colour", () => {
-    render(
+    const { container } = render(
       <FormField label="Summa" error="Eng kam summa — 1 000 so'm">
         {({ id }) => <input id={id} />}
       </FormField>,
     )
-    // NFR-4: an icon and text, so the message survives a colour-blind reader
-    // and a monochrome screenshot alike.
-    expect(screen.getByRole("status").textContent).toContain("⚠")
+
+    // NFR-4: an icon *and* text, so the message survives a colour-blind reader
+    // and a monochrome screenshot alike. The icon is hidden from assistive
+    // technology because the sentence beside it already says the same thing —
+    // `icons.test.tsx` holds that rule across everything.
+    expect(container.querySelector("svg")).toBeInTheDocument()
+    expect(screen.getByRole("status").textContent).toContain("Eng kam summa")
   })
 
   it("keeps a hint and an error as separate descriptions", () => {

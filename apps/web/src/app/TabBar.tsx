@@ -1,3 +1,5 @@
+import { History, House, User } from "lucide-react"
+import type { ComponentType } from "react"
 import { NavLink } from "react-router"
 
 /**
@@ -13,14 +15,27 @@ import { NavLink } from "react-router"
 interface Tab {
   readonly to: string
   readonly label: string
-  /** Decorative: the label carries the meaning, so this is hidden (§13.7). */
-  readonly glyph: string
+  /**
+   * Decorative. §13.7: every icon is `aria-hidden` and has a text equivalent,
+   * so nothing here is the only way to learn what a tab does.
+   *
+   * `lucide-react` sets `aria-hidden` itself — verified, not assumed — so the
+   * prop below is redundant today. It stays as a statement of intent, and
+   * `icons.test.tsx` enforces the rule for anything hand-written that lucide
+   * would not cover.
+   *
+   * SVG rather than emoji, and the difference is not cosmetic. An emoji is
+   * text: a screen reader announces its Unicode name — "house with garden" —
+   * next to the label that already says the same thing, it ignores
+   * `currentColor`, and it renders as a different picture on every platform.
+   */
+  readonly Icon: ComponentType<{ readonly size?: number; readonly "aria-hidden"?: boolean }>
 }
 
 const TABS: readonly Tab[] = [
-  { to: "/", label: "Asosiy", glyph: "🏠" },
-  { to: "/history", label: "Tarix", glyph: "📜" },
-  { to: "/profile", label: "Profil", glyph: "👤" },
+  { to: "/", label: "Asosiy", Icon: House },
+  { to: "/history", label: "Tarix", Icon: History },
+  { to: "/profile", label: "Profil", Icon: User },
 ]
 
 export function TabBar() {
@@ -41,9 +56,7 @@ export function TabBar() {
             >
               {({ isActive }) => (
                 <>
-                  <span aria-hidden="true" className="text-step-1">
-                    {tab.glyph}
-                  </span>
+                  <tab.Icon size={22} aria-hidden={true} />
                   <span
                     className="text-step--1"
                     style={{
