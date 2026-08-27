@@ -15,10 +15,26 @@ try {
   // No local .env; the environment is expected to supply DATABASE_URL.
 }
 
+/**
+ * Migrations connect directly; the application connects through the pooler.
+ *
+ * Neon serves two hostnames for the same database — one with `-pooler` and one
+ * without — and its Prisma guide is explicit that `migrate deploy` needs the
+ * direct one. A migration takes advisory locks and issues DDL across several
+ * statements, and a transaction pooler is free to hand those statements to
+ * different backends. The failure is not a clean refusal: it is a migration
+ * that half-applies.
+ *
+ * `DATABASE_URL` stays the pooled string, because that is what the running
+ * service wants. Falling back to it keeps CI and local development working,
+ * where there is no pooler and the two are the same host.
+ */
+const migrationUrl = process.env.DATABASE_URL_UNPOOLED ?? process.env.DATABASE_URL ?? ""
+
 export default defineConfig({
   schema: "prisma/schema.prisma",
   datasource: {
-    url: env("DATABASE_URL"),
+    url: migrationUrl || env("DATABASE_URL"),
   },
   migrations: {
     path: "prisma/migrations",

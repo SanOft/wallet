@@ -63,9 +63,14 @@ jobs:
 
       # `migrate deploy` applies committed migrations and never authors one,
       # which is what a non-interactive environment needs.
+      # DATABASE_URL_UNPOOLED is the direct connection. Neon's pooler may hand
+      # a migration's statements to different backends, and the failure mode is
+      # a half-applied migration rather than a clean refusal. Optional: where
+      # there is no pooler the config falls back to DATABASE_URL.
       - name: apply migrations
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
         run: yarn workspace @wallet/api exec prisma migrate deploy
 
   release:
