@@ -27,10 +27,19 @@ spelling, which matters because an idempotency key is hashed together with the
 payload: `"0100"` and `"100"` must not be two different requests for the same
 money.
 
-Formatting reads the exponent from a currency registry (`CURRENCIES`), and
-dividing by 100 is never hard-coded. UZS has exponent 0 — a tiyin is not a
-hundredth of anything a user sees — so a hard-coded 100 would be wrong for the
-project's own primary currency.
+Formatting reads two separate numbers from a currency registry (`CURRENCIES`),
+and neither is hard-coded.
+
+`exponent` is how many minor units make one major unit — 2 for UZS, because a
+tiyin is a hundredth of a so'm. `displayDecimals` is how many of them a user is
+shown, and for UZS that is **0**: prices are not quoted in tiyin and nobody
+writes them, so `formatMoney(125_000_000n, "UZS")` renders `1 250 000 so'm`
+rather than `1 250 000,00`.
+
+Keeping them apart is the point. Collapsing them into one number — the obvious
+simplification, since most currencies have `exponent === displayDecimals` — is
+what produces a UI that either shows two zeros nobody wants or an amount
+divided by the wrong power of ten.
 
 ## Consequences
 
