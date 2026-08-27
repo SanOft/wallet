@@ -9,10 +9,24 @@ import { defineConfig, env } from "prisma/config"
  * tolerate its absence — in CI and on Render the variables come from the
  * platform, and a missing file there is expected rather than an error.
  */
+const preset = { ...process.env }
 try {
   process.loadEnvFile(fileURLToPath(new URL(".env", import.meta.url)))
 } catch {
   // No local .env; the environment is expected to supply DATABASE_URL.
+}
+/*
+ * `.env` fills gaps; it does not overwrite what the caller already set.
+ *
+ * `process.loadEnvFile` overrides, which makes every Prisma command ignore an
+ * inline variable — `DATABASE_URL=... prisma migrate deploy` silently runs
+ * against whatever `.env` says instead. That is not a theoretical complaint:
+ * it sent a migration to the wrong database while a second one was being set
+ * up, and the only symptom was "No pending migrations to apply" from a command
+ * that had been pointed somewhere else entirely.
+ */
+for (const [key, value] of Object.entries(preset)) {
+  if (value !== undefined) process.env[key] = value
 }
 
 /**
