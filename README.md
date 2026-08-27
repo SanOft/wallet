@@ -201,6 +201,7 @@ wallet/
 │       │   ├── error.ts    19 API codes, field codes, HTTP status map
 │       │   └── index.ts    barrel
 │       └── test/
+├── .agents/skills/       vendored agent skills, pinned in skills-lock.json
 ├── docs/
 │   ├── spec.md           what gets built
 │   ├── runbook.md        in what order, and verified how

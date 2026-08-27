@@ -3,6 +3,12 @@ dist/
 build/
 coverage/
 
+# Generated symlinks into .agents/skills, pointing at absolute paths on one
+# machine. `core.symlinks` is false on Windows, so git would commit them as text
+# files containing someone else's home directory. The skills themselves are
+# tracked in .agents/; restore the links with `npx skills experimental_install`.
+.claude/skills/
+
 .pnp.*
 .yarn/*
 !.yarn/patches
