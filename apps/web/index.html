@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="uz">
+  <head>
+    <meta charset="UTF-8" />
+    <!--
+      `viewport-fit=cover` is what makes `env(safe-area-inset-*)` report real
+      numbers; without it the notch is padded away by the browser and the tab
+      bar sits in the wrong place on exactly the devices this is built for.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+
+    <!--
+      Inline rather than a file: a browser requests /favicon.ico unprompted, and
+      without this every page load carries a 404. A data URL costs no request at
+      all. The real icon set arrives with the manifest at F6.
+    -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23175CD3'/%3E%3Cpath d='M7 11h18v12H7z' fill='none' stroke='white' stroke-width='2.5' stroke-linejoin='round'/%3E%3Ccircle cx='21' cy='17' r='2' fill='white'/%3E%3C/svg%3E"
+    />
+
+    <title>Wallet</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

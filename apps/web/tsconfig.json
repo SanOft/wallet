@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The base targets Node; this workspace targets a browser through a
+    // bundler, so three settings have to differ and only three.
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "types": ["vite/client"]
+  },
+  "include": ["src/**/*", "test/**/*", "vite.config.ts", "vitest.config.ts"],
+  "exclude": ["dist", "node_modules"]
+}

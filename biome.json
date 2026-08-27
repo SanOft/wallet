@@ -7,7 +7,14 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**", "!.yarn/", "!**/dist/", "!**/coverage/", "!.gitleaks-baseline.json"]
+    "includes": [
+      "**",
+      "!.yarn/",
+      "!**/dist/",
+      "!**/coverage/",
+      "!.gitleaks-baseline.json",
+      "!apps/web/src/styles/tokens.css"
+    ]
   },
   "formatter": {
     "enabled": true,
