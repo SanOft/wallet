@@ -234,6 +234,7 @@ backends — the failure is a half-applied migration, not a refusal.
 | Setting | Value |
 |---|---|
 | Build command | `corepack enable && yarn install --immutable && yarn build` |
+| Node version | pinned by `.node-version` (22); do not set `NODE_VERSION` |
 | Start command | `yarn workspace @wallet/api start` |
 | Health check path | `/health` |
 | Auto-Deploy | **Off** |

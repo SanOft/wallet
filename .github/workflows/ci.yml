@@ -47,10 +47,6 @@ jobs:
       - run: corepack enable
       - run: yarn install --immutable
 
-      # The Prisma client is generated, not committed, so it has to exist
-      # before anything typechecks against it.
-      - run: yarn workspace @wallet/api exec prisma generate
-
       # `migrate deploy` applies committed migrations without trying to author
       # new ones, which is what a non-interactive environment needs.
       - run: yarn workspace @wallet/api exec prisma migrate deploy
