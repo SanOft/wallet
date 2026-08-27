@@ -59,10 +59,14 @@ jobs:
             exit 1
           fi
 
-      - run: yarn workspace @wallet/api exec prisma generate
-
       # `migrate deploy` applies committed migrations and never authors one,
       # which is what a non-interactive environment needs.
+      # No `prisma generate` here: `migrate deploy` reads the schema and the
+      # connection string and nothing else. The step used to exist, without
+      # DATABASE_URL in its environment, and failed with
+      # `PrismaConfigEnvError: Cannot resolve environment variable` — a
+      # migration job brought down by a client it never uses.
+      #
       # DATABASE_URL_UNPOOLED is the direct connection. Neon's pooler may hand
       # a migration's statements to different backends, and the failure mode is
       # a half-applied migration rather than a clean refusal. Optional: where
