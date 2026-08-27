@@ -32,6 +32,12 @@ function report(name: string, ok: boolean, detail: string): void {
   if (!ok) failures++
 }
 
+/** Names the difference between a broken endpoint and an absent instance. */
+function describe(result: Result): string {
+  if (result.routing) return `status=${result.status} platform=${result.routing}`
+  return `status=${result.status}`
+}
+
 /** A number no real user holds: the +998 33 range is unassigned to carriers. */
 function smokePhone(): string {
   const suffix = String(Math.floor(1_000_000 + Math.random() * 8_999_999))
@@ -45,6 +51,10 @@ function password(): string {
 interface Result {
   status: number
   body: Record<string, unknown>
+  /** Present only when our own service answered; the edge does not set it. */
+  requestId: string | null
+  /** Render sets this when it has no instance to route to. */
+  routing: string | null
 }
 
 async function call(
@@ -64,7 +74,12 @@ async function call(
   } catch {
     body = { raw: text.slice(0, 200) }
   }
-  return { status: res.status, body }
+  return {
+    status: res.status,
+    body,
+    requestId: res.headers.get("x-request-id"),
+    routing: res.headers.get("x-render-routing"),
+  }
 }
 
 /**
@@ -76,7 +91,7 @@ async function withRetries(
   attempt: () => Promise<Result>,
   ok: (result: Result) => boolean,
 ): Promise<Result> {
-  let last: Result = { status: 0, body: {} }
+  let last: Result = { status: 0, body: {}, requestId: null, routing: null }
   for (let i = 1; i <= 6; i++) {
     try {
       last = await attempt()
@@ -131,7 +146,7 @@ async function main(): Promise<void> {
       password: senderPassword,
     }),
   })
-  report("POST /api/auth/register", register.status === 201, `status=${register.status}`)
+  report("POST /api/auth/register", register.status === 201, describe(register))
 
   const recipientPhone = smokePhone()
   const recipient = await call("/api/auth/register", {
@@ -143,11 +158,7 @@ async function main(): Promise<void> {
       password: password(),
     }),
   })
-  report(
-    "POST /api/auth/register (recipient)",
-    recipient.status === 201,
-    `status=${recipient.status}`,
-  )
+  report("POST /api/auth/register (recipient)", recipient.status === 201, describe(recipient))
 
   // 3 — it can authenticate.
   const login = await call("/api/auth/login", {
@@ -155,7 +166,7 @@ async function main(): Promise<void> {
     body: JSON.stringify({ phone: senderPhone, password: senderPassword }),
   })
   const token = String(login.body.accessToken ?? "")
-  report("POST /api/auth/login", login.status === 200 && token.length > 0, `status=${login.status}`)
+  report("POST /api/auth/login", login.status === 200 && token.length > 0, describe(login))
 
   if (!token) {
     console.error("no access token — the remaining checks cannot run")
@@ -171,7 +182,7 @@ async function main(): Promise<void> {
     key: crypto.randomUUID(),
     body: JSON.stringify({}),
   })
-  report("POST /api/accounts/topup", topUp.status === 201, `status=${topUp.status}`)
+  report("POST /api/accounts/topup", topUp.status === 201, describe(topUp))
 
   const transfer = await call("/api/transfers", {
     method: "POST",
