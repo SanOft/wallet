@@ -18,16 +18,34 @@ export const authApi = createApi({
     register: build.mutation<AuthResponse, RegisterRequest>({
       query: (body) => ({ url: "/auth/register", method: "POST", body }),
       onQueryStarted: async (_arg, { dispatch, queryFulfilled }) => {
-        const { data } = await queryFulfilled
-        dispatch(credentialsReceived({ accessToken: data.accessToken, user: data.user }))
+        // Caught, not left to float. `queryFulfilled` rejects on any failure —
+        // a wrong password is the ordinary case — and an uncaught rejection
+        // here reaches the browser console as an unhandled error for something
+        // the UI is already reporting properly. The caller still sees the
+        // failure through the mutation result.
+        try {
+          const { data } = await queryFulfilled
+          dispatch(credentialsReceived({ accessToken: data.accessToken, user: data.user }))
+        } catch {
+          // The form renders the error; there is nothing to store.
+        }
       },
     }),
 
     login: build.mutation<AuthResponse, LoginRequest>({
       query: (body) => ({ url: "/auth/login", method: "POST", body }),
       onQueryStarted: async (_arg, { dispatch, queryFulfilled }) => {
-        const { data } = await queryFulfilled
-        dispatch(credentialsReceived({ accessToken: data.accessToken, user: data.user }))
+        // Caught, not left to float. `queryFulfilled` rejects on any failure —
+        // a wrong password is the ordinary case — and an uncaught rejection
+        // here reaches the browser console as an unhandled error for something
+        // the UI is already reporting properly. The caller still sees the
+        // failure through the mutation result.
+        try {
+          const { data } = await queryFulfilled
+          dispatch(credentialsReceived({ accessToken: data.accessToken, user: data.user }))
+        } catch {
+          // The form renders the error; there is nothing to store.
+        }
       },
     }),
 

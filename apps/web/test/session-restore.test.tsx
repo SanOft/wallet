@@ -114,7 +114,9 @@ describe("restoring a session on boot", () => {
      * the second call presents one the first has spent, §11.3's reuse detection
      * fires, and the family is revoked: the app signs itself out.
      */
-    let release: (() => void) | null = null
+    // Definite assignment: the executor runs synchronously, but TypeScript
+    // cannot see that and narrows a `| null` binding to `never` at the call.
+    let release!: () => void
     const held = new Promise<Response>((resolve) => {
       release = () => resolve(json(200, { accessToken: "restored", user: null }))
     })
@@ -126,7 +128,7 @@ describe("restoring a session on boot", () => {
     await Promise.resolve()
     mount(store)
 
-    release?.()
+    release()
     await waitFor(() => expect(store.getState().auth.status).toBe("authenticated"))
 
     expect(calls.filter((url) => url === "/api/auth/refresh")).toHaveLength(1)
