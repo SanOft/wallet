@@ -1,6 +1,5 @@
 import { fileURLToPath } from "node:url"
 import type { PrismaClient } from "@prisma/client"
-import { loadEnv } from "../src/config/env.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
 
 /**
@@ -20,13 +19,26 @@ const SYSTEM_PHONE = "+998000000000"
 const SYSTEM_PASSWORD_HASH = "!system-account-cannot-authenticate!"
 const TREASURY_CURRENCY = "UZS"
 
+/**
+ * The one variable this script needs, checked here rather than by the full
+ * boot-time schema. A seed that demands a JWT secret cannot run in the one
+ * place it is most needed — a fresh deploy, before anything else is set.
+ */
+function connectionString(): string {
+  const url = process.env.DATABASE_URL
+  if (!url) throw new Error("DATABASE_URL is required to seed")
+  return url
+}
+
 export async function seed(
   injected?: PrismaClient,
 ): Promise<{ userId: string; accountId: string }> {
-  // Seeding needs a connection string and nothing else. Reaching for the full
-  // environment would make this script refuse to run without a JWT secret it
-  // never uses — which is exactly how it failed in CI.
-  const prisma = injected ?? createPrismaClient(loadEnv())
+  // Seeding needs a connection string and nothing else. This comment has been
+  // here since the CI failure it describes, while the line below went on
+  // calling `loadEnv()`, which validates JWT_SECRET, CORS_ORIGINS and the rest
+  // — so seeding still refused to run without a secret it never uses. Now the
+  // code does what the comment says.
+  const prisma = injected ?? createPrismaClient({ DATABASE_URL: connectionString() })
 
   try {
     const system = await prisma.user.upsert({

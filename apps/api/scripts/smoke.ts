@@ -67,11 +67,44 @@ async function call(
   return { status: res.status, body }
 }
 
+/**
+ * Up to six attempts over roughly a minute. Only the readiness check uses this:
+ * a transfer that fails is a real failure, and retrying it would both hide the
+ * fault and move money twice.
+ */
+async function withRetries(
+  attempt: () => Promise<Result>,
+  ok: (result: Result) => boolean,
+): Promise<Result> {
+  let last: Result = { status: 0, body: {} }
+  for (let i = 1; i <= 6; i++) {
+    try {
+      last = await attempt()
+      if (ok(last)) return last
+      console.log(`  waking: attempt ${i} gave ${last.status}`)
+    } catch (error) {
+      console.log(`  waking: attempt ${i} threw ${error instanceof Error ? error.message : ""}`)
+    }
+    if (i < 6) await new Promise((resolve) => setTimeout(resolve, 10_000))
+  }
+  return last
+}
+
 async function main(): Promise<void> {
   console.log(`smoke: ${BASE}`)
 
   // 1 — the service and its database.
-  const health = await call("/health")
+  //
+  // Retried, because both tiers this runs against sleep. Neon scales its
+  // compute to zero and Render's free instance idles out, so the first
+  // connection after a quiet period is spent waking something up and is
+  // dropped — observed as `Connection terminated unexpectedly` while setting
+  // the database up by hand. A single attempt here would report a healthy
+  // deployment as broken.
+  const health = await withRetries(
+    () => call("/health"),
+    (r) => r.status === 200,
+  )
   const version = String(health.body.version ?? "")
   report(
     "GET /health",

@@ -11,7 +11,13 @@ import type { Env } from "../config/env.js"
  * so a test can stand up its own against a throwaway database without the
  * import graph forcing a connection to the real one.
  */
-export function createPrismaClient(env: Env): PrismaClient {
+/**
+ * Takes only the field it reads. Widening this to the whole `Env` made the seed
+ * script — which needs a connection string and nothing else — refuse to run
+ * without a JWT secret, in the one situation where it matters most: a fresh
+ * database, before anything else is configured.
+ */
+export function createPrismaClient(env: Pick<Env, "DATABASE_URL">): PrismaClient {
   const adapter = new PrismaPg({ connectionString: env.DATABASE_URL })
   return new PrismaClient({ adapter })
 }
