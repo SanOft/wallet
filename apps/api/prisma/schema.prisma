@@ -43,17 +43,31 @@ enum TransferChannel {
 }
 
 model User {
-  id             String    @id @default(uuid()) @db.Uuid
-  phone          String    @unique
-  firstName      String
-  lastName       String
+  id               String    @id @default(uuid()) @db.Uuid
+  phone            String    @unique
+  firstName        String
+  lastName         String
   /// Argon2id (NFR-1.1). Never leaves the server; publicUserSchema strips it.
-  passwordHash   String
+  passwordHash     String
   /// Argon2id. Null until the user sets a USSD PIN in the profile (FR-1.6).
-  pinHash        String?
-  pinLockedUntil DateTime?
-  role           UserRole  @default(USER)
-  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  pinHash          String?
+  pinLockedUntil   DateTime?
+  role             UserRole  @default(USER)
+  /// Access tokens issued before this instant are refused on the money routes
+  /// (FR-2.6, P-16).
+  ///
+  /// A JWT is self-contained, so revoking a refresh family reaches the refresh
+  /// token immediately and leaves the attacker's *access* token working until
+  /// it expires — up to fifteen minutes on the endpoints where fifteen minutes
+  /// matters. This column is the revocation list, kept to one nullable
+  /// timestamp instead of a table: null is the ordinary case and costs the
+  /// lookup nothing.
+  ///
+  /// Set by reuse detection, which is the moment something is known to be
+  /// stolen. Not by an ordinary logout: that ends one session, and this would
+  /// end every one the user has on every device.
+  tokensValidAfter DateTime? @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
 
   accounts      Account[]
   refreshTokens RefreshToken[]
@@ -74,10 +88,10 @@ model Account {
   type      AccountType @default(USER)
   createdAt DateTime    @default(now()) @db.Timestamptz(3)
 
-  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ledgerEntries   LedgerEntry[]
-  transfersSent   Transfer[]    @relation("TransfersSent")
-  transfersGot    Transfer[]    @relation("TransfersReceived")
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntries LedgerEntry[]
+  transfersSent Transfer[]    @relation("TransfersSent")
+  transfersGot  Transfer[]    @relation("TransfersReceived")
 
   @@unique([userId, currency])
   @@index([userId])
@@ -116,14 +130,14 @@ model Transfer {
 /// CHECK: amount <> 0 — a zero entry carries no information and would let a
 /// transfer satisfy "two rows summing to zero" while moving nothing.
 model LedgerEntry {
-  id         String   @id @default(uuid()) @db.Uuid
-  accountId  String   @db.Uuid
-  transferId String   @db.Uuid
+  id           String   @id @default(uuid()) @db.Uuid
+  accountId    String   @db.Uuid
+  transferId   String   @db.Uuid
   /// Signed minor units: negative debits the account, positive credits it.
-  amount     BigInt
+  amount       BigInt
   /// Account balance immediately after this entry, making an audit O(1) (§9.2).
   balanceAfter BigInt
-  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
 
   account  Account  @relation(fields: [accountId], references: [id])
   transfer Transfer @relation(fields: [transferId], references: [id])
