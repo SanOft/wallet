@@ -1,8 +1,11 @@
+import { Provider } from "react-redux"
 import { BrowserRouter, Route, Routes } from "react-router"
+import { useSessionRestore } from "../features/auth/useSessionRestore.js"
 import { History } from "../screens/History.js"
 import { Home } from "../screens/Home.js"
 import { NotFound } from "../screens/NotFound.js"
 import { Profile } from "../screens/Profile.js"
+import { makeStore } from "./store.js"
 import { TabBar } from "./TabBar.js"
 
 /**
@@ -13,7 +16,19 @@ import { TabBar } from "./TabBar.js"
  * because a design system judged only against screens that do not exist yet is
  * judged against nothing.
  */
-export function App() {
+/**
+ * One store per mount. A module-level instance would be shared by every test
+ * in a file, so one test's session would leak into the next.
+ */
+const store = makeStore()
+
+/**
+ * Inside the Provider, because it needs the store. Splitting it out keeps
+ * `App` a wiring component with nothing to test in isolation.
+ */
+function Shell() {
+  useSessionRestore()
+
   return (
     <BrowserRouter>
       <a
@@ -43,5 +58,13 @@ export function App() {
 
       <TabBar />
     </BrowserRouter>
+  )
+}
+
+export function App() {
+  return (
+    <Provider store={store}>
+      <Shell />
+    </Provider>
   )
 }

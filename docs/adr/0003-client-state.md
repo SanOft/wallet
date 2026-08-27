@@ -1,6 +1,6 @@
 # ADR-0003 — Redux Toolkit + RTK Query for client state
 
-**Status:** Proposed — the frontend begins in September (F0–F7)
+**Status:** Accepted — F1
 **Relates to:** spec §8.4, §13.5, FR-8.3, FR-8.4
 
 ## Context
@@ -65,6 +65,31 @@ common path, and the retry policy becomes bespoke, untyped and untested.
 
 **Context + `useReducer`.** No dependency. Rejected: a durable retry queue is
 not a `useReducer` problem, and building one there means rebuilding middleware.
+
+## What F1 settled
+
+The store, `authSlice` and `baseQueryWithReauth` are built. Three things the
+record did not anticipate, decided while building them:
+
+**No resolver library, and no mutex library.** Both would have been reasonable
+defaults and both were rejected for the same reason: the thing they wrap is
+already a one-liner here. The Zod↔form mapping is trivial because the shared
+schemas use field codes as their messages (F0.5), and §11.3's mutex is a shared
+promise — `refreshInFlight ??= performRefresh().finally(clear)`. A library
+would add a dependency and hide the semantics the parallel-401 test asserts.
+
+**A deny-list, not a heuristic.** A wrong password answers `401`
+(`AUTH_INVALID`, §12.3), so a naive "401 means expired" rule makes a failed
+sign-in trigger a refresh — burning a request and, with a stale cookie still
+valid, potentially signing the user in as somebody they did not just
+authenticate as. `/auth/login`, `/auth/register` and `/auth/refresh` never
+reauth. Removing that list turns exactly two tests red.
+
+**`status: "unknown"` is part of the model.** The token is in memory, so a
+reload has none, and "no token" means two different things before the cookie
+has been asked. Starting at `"anonymous"` shows the login screen to a
+signed-in user on every page load — a bug that looks like an expired session
+and is therefore rarely reported.
 
 ## Reversibility
 

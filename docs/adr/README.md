@@ -16,7 +16,7 @@ one most often needed.
 |---|---|---|
 | [0001](0001-invariants-in-the-database.md) | The ledger's invariants live in the database, not in the service | Accepted — day 2 |
 | [0002](0002-money-as-minor-units.md) | Money is `BIGINT` minor units, carried over JSON as strings | Accepted — day 1 |
-| [0003](0003-client-state.md) | Redux Toolkit + RTK Query for client state | Proposed |
+| [0003](0003-client-state.md) | Redux Toolkit + RTK Query for client state | Accepted — F1 |
 | [0004](0004-biome-over-eslint.md) | Biome replaces ESLint, typescript-eslint and Prettier | Accepted — day 1 |
 | [0005](0005-jose-over-jsonwebtoken.md) | `jose` for JWTs, with the algorithm pinned in both directions | Accepted — day 3 |
 | [0006](0006-two-isolation-strategies.md) | Serializable for transfers, advisory lock for top-ups | Accepted — day 5 |
