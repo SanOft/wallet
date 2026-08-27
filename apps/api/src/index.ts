@@ -36,7 +36,7 @@ async function main(): Promise<void> {
   await warmDummyHash()
 
   const tokens = createTokenService(env)
-  const auth = new AuthService({ prisma, tokens })
+  const auth = new AuthService({ prisma, tokens, pepper: env.JWT_SECRET })
 
   const transfers = new TransferService({ prisma })
 

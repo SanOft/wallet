@@ -61,6 +61,28 @@ export class InvalidCredentialsError extends DomainError {
 }
 
 /**
+ * FR-2.3's backoff is active for this number.
+ *
+ * Carries the wait in seconds because §12.3 pairs `AUTH_LOCKED` with a
+ * `Retry-After` header and a message that names the delay — "try again in X
+ * minutes" is only useful if X is real. The adapter reads it from here rather
+ * than recomputing it, so the header and the body cannot disagree.
+ *
+ * Raised for unregistered numbers on the same schedule as registered ones. A
+ * backoff that only applies to real accounts answers the fourth attempt with
+ * 429 for a customer and 401 for a stranger, which identifies customers more
+ * cheaply than any of the oracles FR-2.2 was written to close.
+ */
+export class AccountLockedError extends DomainError {
+  readonly retryAfterSeconds: number
+
+  constructor(retryAfterSeconds: number) {
+    super("AUTH_LOCKED", "Too many attempts")
+    this.retryAfterSeconds = retryAfterSeconds
+  }
+}
+
+/**
  * The refresh credential is unknown, revoked or expired.
  *
  * A distinct code from `AUTH_TOKEN_EXPIRED` on purpose: §12.3 tells the client

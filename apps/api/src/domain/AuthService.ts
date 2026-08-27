@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import type { PrismaClient } from "@prisma/client"
 import type { AuthResponse, LoginRequest, PublicUser, RegisterRequest } from "@wallet/shared"
 import {
+  attemptSubject,
   dummyHash,
   generateRefreshToken,
   hashRefreshToken,
@@ -10,6 +11,7 @@ import {
 } from "../infra/crypto.js"
 import type { TokenService } from "../infra/jwt.js"
 import {
+  AccountLockedError,
   InvalidCredentialsError,
   RefreshTokenInvalidError,
   RefreshTokenReusedError,
@@ -40,6 +42,12 @@ export interface Session {
 export interface AuthServiceDependencies {
   readonly prisma: PrismaClient
   readonly tokens: TokenService
+  /**
+   * Keys the digest FR-2.3's backoff counts against. `JWT_SECRET` is passed
+   * here rather than a second variable — `attemptSubject` domain-separates the
+   * two uses — so a deploy cannot end up with a signing key but no pepper.
+   */
+  readonly pepper: string
   /** Injected so tests can freeze it; the client clock is never trusted (D-10). */
   readonly now?: () => Date
 }
@@ -67,15 +75,69 @@ function toPublicUser(user: UserRow): PublicUser {
   }
 }
 
+/** FR-2.3: three failures are free; the fourth waits 1s, the fifth 2s. */
+const BACKOFF_FREE_ATTEMPTS = 3
+
+/** FR-2.3 caps the wait at fifteen minutes. */
+const BACKOFF_CAP_SECONDS = 15 * 60
+
+/**
+ * 2^(n-3) reaches the cap at thirteen failures, so counting past that changes
+ * nothing — and an unbounded count would let an attacker grow the query.
+ */
+const BACKOFF_MAX_COUNTED = BACKOFF_FREE_ATTEMPTS + 13
+
 export class AuthService {
   readonly #prisma: PrismaClient
   readonly #tokens: TokenService
   readonly #now: () => Date
+  readonly #pepper: string
 
-  constructor({ prisma, tokens, now = () => new Date() }: AuthServiceDependencies) {
+  constructor({ prisma, tokens, pepper, now = () => new Date() }: AuthServiceDependencies) {
     this.#prisma = prisma
     this.#tokens = tokens
+    this.#pepper = pepper
     this.#now = now
+  }
+
+  /**
+   * FR-2.3: after three consecutive failures, 1s, then 2s, 4s, and so on,
+   * capped at fifteen minutes.
+   *
+   * Counted against a keyed digest of the number rather than against the user,
+   * so an unregistered number backs off on exactly the same schedule. Counted
+   * as *consecutive* failures since the last success, so signing in clears the
+   * penalty — a window-based count would keep punishing someone who has
+   * already proved who they are.
+   */
+  async #backoffSeconds(subject: string): Promise<number> {
+    const lastSuccess = await this.#prisma.authAttempt.findFirst({
+      where: { subject, succeeded: true },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    })
+
+    const failures = await this.#prisma.authAttempt.findMany({
+      where: {
+        subject,
+        succeeded: false,
+        ...(lastSuccess ? { createdAt: { gt: lastSuccess.createdAt } } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+      // Beyond the cap the delay stops growing, so there is nothing to learn
+      // from counting further.
+      take: BACKOFF_MAX_COUNTED,
+    })
+
+    if (failures.length < BACKOFF_FREE_ATTEMPTS) return 0
+
+    const delay = Math.min(2 ** (failures.length - BACKOFF_FREE_ATTEMPTS), BACKOFF_CAP_SECONDS)
+    const newest = failures[0]?.createdAt
+    if (!newest) return 0
+
+    const elapsed = (this.#now().getTime() - newest.getTime()) / 1000
+    return Math.max(0, Math.ceil(delay - elapsed))
   }
 
   /**
@@ -134,6 +196,20 @@ export class AuthService {
    * write this and it is exactly the leak S-5 tests for.
    */
   async login(input: LoginRequest): Promise<Session> {
+    const subject = attemptSubject(input.phone, this.#pepper)
+
+    /*
+     * Checked before the password, and before the user is even looked up.
+     *
+     * Verifying first would spend an argon2 hash on every request an attacker
+     * sends, which turns the defence into the denial of service it exists to
+     * prevent. Refusing early also keeps the locked response identical for
+     * registered and unregistered numbers — both are fast, both say the same
+     * thing.
+     */
+    const waitFor = await this.#backoffSeconds(subject)
+    if (waitFor > 0) throw new AccountLockedError(waitFor)
+
     const user = await this.#prisma.user.findUnique({
       where: { phone: input.phone },
       select: { id: true, phone: true, firstName: true, lastName: true, passwordHash: true },
@@ -147,7 +223,11 @@ export class AuthService {
     // made a registered number cost one extra INSERT, which was measurable from
     // outside as ~6ms and classified numbers at 80% accuracy.
     await this.#prisma.authAttempt.create({
-      data: { userId: user?.id ?? null, succeeded: Boolean(user) && passwordMatches },
+      data: {
+        userId: user?.id ?? null,
+        subject,
+        succeeded: Boolean(user) && passwordMatches,
+      },
     })
 
     if (!user || !passwordMatches) throw new InvalidCredentialsError()
