@@ -217,7 +217,17 @@ Every task carries: **ID · what · files · acceptance criteria**. Each day end
 The pipeline is written and cannot run until these exist. Everything else in
 Day 6 is automated.
 
-**Neon.** Create a project and a database. Copy the pooled connection string.
+**Neon.** Create a project and a database, then copy **both** connection
+strings from the dashboard — they differ by one word in the hostname:
+
+| String | Hostname | Used by |
+|---|---|---|
+| Pooled | contains `-pooler` | the running service (`DATABASE_URL`) |
+| Direct | no `-pooler` | `prisma migrate deploy` (`DATABASE_URL_UNPOOLED`) |
+
+Both are required. A migration takes advisory locks and issues DDL across
+several statements, and a transaction pooler may hand those to different
+backends — the failure is a half-applied migration, not a refusal.
 
 **Render.** Create a Web Service from this repository.
 
@@ -245,7 +255,8 @@ loudly instead of routing `/api` somewhere unintended.
 
 | Secret | Value |
 |---|---|
-| `DATABASE_URL` | The Neon string, for the migration job |
+| `DATABASE_URL` | The **pooled** Neon string |
+| `DATABASE_URL_UNPOOLED` | The **direct** Neon string, for migrations |
 | `RENDER_DEPLOY_HOOK_URL` | Render → service → Settings → Deploy Hook |
 | `PRODUCTION_URL` | The Vercel origin, e.g. `https://wallet.vercel.app` |
 
