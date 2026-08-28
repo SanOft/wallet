@@ -22,6 +22,16 @@ export type Freshness =
   | { readonly kind: "absent" }
   /** On screen, and the last attempt to confirm it succeeded. */
   | { readonly kind: "current"; readonly asOf: number }
+  /**
+   * On screen from a previous visit's cache, with a request in flight.
+   *
+   * Distinct from `unconfirmed` because nothing has failed yet. Collapsing the
+   * two would flash "could not reach the server" for the couple of hundred
+   * milliseconds every cold start takes — an interface that cries wolf on
+   * every launch is one whose warnings stop being read, which costs exactly
+   * when a warning is real.
+   */
+  | { readonly kind: "checking"; readonly asOf: number }
   /** On screen, but the last attempt failed — so this is the past tense. */
   | {
       readonly kind: "unconfirmed"
