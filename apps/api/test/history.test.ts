@@ -317,6 +317,75 @@ describe.skipIf(!hasDatabase)("FR-5 — transaction history", () => {
     })
   })
 
+  describe("one transfer on its own (FR-5.3)", () => {
+    it("is readable by either party, from their own side of it", async () => {
+      const sender = await newUser("Alisher", "Navoiy")
+      const recipient = await newUser("Zulfiya", "Karimova")
+      await topup(sender)
+      const moved = await send(sender, recipient, "100000")
+
+      const asSender = await request(sender.app)
+        .get(`/api/transfers/${moved.id}`)
+        .set("authorization", `Bearer ${sender.token}`)
+      const asRecipient = await request(recipient.app)
+        .get(`/api/transfers/${moved.id}`)
+        .set("authorization", `Bearer ${recipient.token}`)
+
+      expect(asSender.status).toBe(200)
+      expect(asRecipient.status).toBe(200)
+
+      // One transfer, two directions — the same mapping the list uses, which is
+      // why they share it. Two implementations would drift on exactly this
+      // field, and the drift would render a payment as a debit.
+      expect(asSender.body.direction).toBe("outgoing")
+      expect(asRecipient.body.direction).toBe("incoming")
+      expect(asSender.body.amount).toBe("100000")
+      expect(asRecipient.body.amount).toBe("100000")
+    })
+
+    it("answers a stranger exactly as it answers a transfer that does not exist", async () => {
+      const sender = await newUser()
+      const recipient = await newUser()
+      const stranger = await newUser()
+      await topup(sender)
+      const moved = await send(sender, recipient, "100000")
+
+      const someoneElses = await request(stranger.app)
+        .get(`/api/transfers/${moved.id}`)
+        .set("authorization", `Bearer ${stranger.token}`)
+      const imaginary = await request(stranger.app)
+        .get("/api/transfers/3f2504e0-4f89-41d3-9a0c-0305e82c3301")
+        .set("authorization", `Bearer ${stranger.token}`)
+
+      /*
+       * Identical answers on purpose. Telling the two apart would make this an
+       * oracle for which transfer ids are real — the same disclosure FR-4.9
+       * pays a masked name to avoid.
+       */
+      expect(someoneElses.status).toBe(404)
+      expect(imaginary.status).toBe(404)
+      expect(someoneElses.body.error.code).toBe(imaginary.body.error.code)
+    })
+
+    it("does not treat a malformed id as a different kind of failure", async () => {
+      const user = await newUser()
+
+      const res = await request(user.app)
+        .get("/api/transfers/not-a-uuid")
+        .set("authorization", `Bearer ${user.token}`)
+
+      expect(res.status).toBe(404)
+    })
+
+    it("requires a token", async () => {
+      const { app } = buildApp(prisma, { ...process.env })
+
+      const res = await request(app).get("/api/transfers/3f2504e0-4f89-41d3-9a0c-0305e82c3301")
+
+      expect(res.status).toBe(401)
+    })
+  })
+
   describe("filters (FR-5.2)", () => {
     it("separates incoming from outgoing", async () => {
       const user = await newUser()

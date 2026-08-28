@@ -44,6 +44,9 @@ import { UpdatePrompt } from "./UpdatePrompt.js"
  */
 const Home = lazy(() => import("../screens/Home.js").then((m) => ({ default: m.Home })))
 const Transfer = lazy(() => import("../screens/Transfer.js").then((m) => ({ default: m.Transfer })))
+const TransferDetail = lazy(() =>
+  import("../screens/TransferDetail.js").then((m) => ({ default: m.TransferDetail })),
+)
 const History = lazy(() => import("../screens/History.js").then((m) => ({ default: m.History })))
 const Profile = lazy(() => import("../screens/Profile.js").then((m) => ({ default: m.Profile })))
 const FormShowcase = lazy(() =>
@@ -188,6 +191,14 @@ function Shell() {
               element={
                 <RequireAuth>
                   <FormShowcase />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/history/:id"
+              element={
+                <RequireAuth>
+                  <TransferDetail />
                 </RequireAuth>
               }
             />
