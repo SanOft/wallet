@@ -16,9 +16,34 @@ import { resetSessionRestore } from "../src/features/auth/useSessionRestore.js"
  * exercised by every shell test rather than only by its own.
  */
 
+/**
+ * The readable companion the boot refresh now checks before asking.
+ *
+ * Without it the application does not call `/api/auth/refresh` at all — which
+ * is the point of the cookie — so a test that stubs a successful refresh and
+ * forgets this one is testing a request nobody makes.
+ */
+export function giveSessionHint(): void {
+  // biome-ignore lint/suspicious/noDocumentCookie: the rule prefers CookieStore,
+  // which jsdom does not implement — and this is the API the code under test
+  // reads, so writing through a different one would test nothing.
+  document.cookie = "wallet_session=1; path=/"
+}
+
+export function clearSessionHint(): void {
+  // biome-ignore lint/suspicious/noDocumentCookie: see giveSessionHint.
+  document.cookie = "wallet_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
+}
+
 export function stubSession(options: { readonly signedIn: boolean }) {
   resetRefreshState()
   resetSessionRestore()
+
+  // A signed-out visitor has no hint, and the app must not ask on their
+  // behalf; a signed-in one does, which is what makes the stubbed refresh
+  // reachable at all.
+  if (options.signedIn) giveSessionHint()
+  else clearSessionHint()
 
   vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(new Request(input, init).url).pathname

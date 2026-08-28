@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { App } from "../src/app/App.js"
 import { resetRefreshState } from "../src/app/baseQuery.js"
 import { resetSessionRestore } from "../src/features/auth/useSessionRestore.js"
+import { giveSessionHint } from "./renderApp.js"
 
 /**
  * F3's home screen, and the rule the whole screen exists to hold: a number is
@@ -76,6 +77,9 @@ let script: (url: string, call: number) => Reply | "network-failure"
 beforeEach(() => {
   resetRefreshState()
   resetSessionRestore()
+  // The boot refresh is skipped entirely without this, so every one of these
+  // tests would render the login screen instead of the home screen.
+  giveSessionHint()
   calls = []
   script = (url) => OK[url] ?? { status: 200, body: {} }
   window.history.pushState({}, "", "/")

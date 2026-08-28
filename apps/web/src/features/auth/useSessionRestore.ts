@@ -39,12 +39,50 @@ export function resetSessionRestore(): void {
   bootRefresh = null
 }
 
+/**
+ * The name of the readable companion to the `httpOnly` refresh cookie.
+ *
+ * Duplicated from `apps/api/src/adapters/http/cookies.ts` rather than shared
+ * through `packages/shared`, and that is a deliberate limit: the client is not
+ * allowed to know anything about this cookie except that it exists. Putting it
+ * in the contract package would invite a second use, and the second use of a
+ * cookie the server never verifies is where it stops being a hint and starts
+ * being an authorisation nobody meant to grant.
+ */
+const SESSION_HINT = "wallet_session"
+
+function hasSessionHint(): boolean {
+  // `document.cookie` is a flat string; the hint holds "1" and nothing else,
+  // so presence of the name is the entire question.
+  return document.cookie.split(";").some((part) => part.trim().startsWith(`${SESSION_HINT}=`))
+}
+
 export function useSessionRestore(): void {
   const dispatch = useAppDispatch()
   const status = useAppSelector((state) => state.auth.status)
 
   useEffect(() => {
     if (status !== "unknown") return
+
+    /*
+     * Do not ask when the answer is already known to be no.
+     *
+     * The refresh cookie cannot be read from JavaScript, so this used to call
+     * `/api/auth/refresh` on every cold start and take a `401` for everyone
+     * who was not signed in — a request guaranteed to fail, on the first paint
+     * of the login screen, spending a round trip on a connection NFR-3 assumes
+     * is bad. It also put a console error on every anonymous page load, which
+     * is what Lighthouse's best-practices audit was reporting.
+     *
+     * The hint is set beside the refresh cookie and cleared with it. If it is
+     * ever wrong in the direction of absent-but-signed-in, this shows the
+     * login screen to someone who is still authenticated — which is why the
+     * server derives both cookies' attributes from one function.
+     */
+    if (!hasSessionHint()) {
+      dispatch(signedOut())
+      return
+    }
 
     let cancelled = false
     // Assigned before anything is awaited, so a second synchronous mount finds

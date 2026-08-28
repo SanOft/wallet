@@ -1,0 +1,16 @@
+# Valid and permissive, which is a reversal worth explaining.
+#
+# The first version here disallowed everything, on the reasoning that every
+# route is an authenticated screen or a sign-in form and indexing them puts the
+# shape of the application into a public index.
+#
+# That reasoning was weak once examined. This is a single-page application: the
+# HTML a crawler receives is the same empty shell every visitor gets, with no
+# user data and no route-specific content in it. Blocking indexing protected
+# nothing real, and it cost the SEO audit forty points — a measurable loss
+# against an imagined gain.
+#
+# If a route ever renders something on the server that should not be public,
+# the answer is a `noindex` header on that route, not a blanket rule here.
+User-agent: *
+Allow: /

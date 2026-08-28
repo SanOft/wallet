@@ -146,9 +146,17 @@ export function LoginScreen() {
         </button>
       </form>
 
+      {/*
+        Underlined, not merely coloured. A link inside a block of text has to
+        be distinguishable without colour (WCAG 1.4.1) unless it clears 3:1
+        against the text around it — and measured by Lighthouse, this one was
+        at **1.15:1** in dark mode (#84adff on #98a2b3). Primary against
+        secondary text is a pair §13.2.2 never listed, which is P-29 arriving
+        for the second time.
+      */}
       <p className="m-0 text-step--1 text-(--color-text-secondary)">
         Hisobingiz yo&apos;qmi?{" "}
-        <Link to="/register" className="text-(--color-primary)">
+        <Link to="/register" className="text-(--color-primary) underline">
           Ro&apos;yxatdan o&apos;ting
         </Link>
       </p>

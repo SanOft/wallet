@@ -83,6 +83,55 @@ Lint runs first because it is the cheapest. Build comes next, not last: `apps/*`
 - **Never** commit on a red `verify`.
 - After a fix, re-run the **whole** `verify`, not just the stage that failed. A fix can break something upstream.
 
+### Checking the PWA (F6)
+
+Lighthouse removed its PWA category in v12, so there is no score to point at.
+What replaces it, against a production build served by `vite preview`:
+
+```bash
+yarn workspace @wallet/web build
+yarn workspace @wallet/web preview --port 4174
+```
+
+1. The manifest parses, names the app, is `display: standalone`, and carries a
+   `maskable` icon — a maskable icon must be full-bleed, because the platform
+   crops it and transparent margins come back as holes.
+2. `navigator.serviceWorker.controller` is non-null **after a reload**. It is
+   null on the first load by design: the worker activates and takes over on the
+   next navigation.
+3. With the network switched off in DevTools, a reload still renders the shell.
+
+### The four scores, and the floor under them
+
+All four Lighthouse categories are held at **98 or above**. Measured on
+2026-08-28 at Lighthouse 13.4.1 against a production build:
+
+| | desktop | mobile |
+|---|---|---|
+| Performance | 100 | **98** |
+| Accessibility | 100 | 100 |
+| Best practices | 100 | 100 |
+| SEO | 100 | 100 |
+
+```bash
+npx lighthouse http://localhost:4176/login   --only-categories=performance,accessibility,best-practices,seo   --chrome-flags="--headless=new" --output=json --output-path=lh.json
+```
+
+Mobile performance is **at the floor, with no headroom**: FCP 1.7s, LCP 2.0s,
+TBT 80ms under simulated throttling. That number is framework cost — React,
+Redux Toolkit, RTK Query, the router and Zod are all needed to render a login
+form, and they are ~120 KB gzipped between them. Route splitting moved the
+signed-in screens out of the critical path, which was right on its own terms
+but bought roughly 4 KB and did not move the score.
+
+Buying real headroom means taking RTK Query and Zod off the anonymous path,
+which is architecture, not tuning. Recorded rather than done.
+
+One caveat worth knowing before it wastes an afternoon: DevTools network
+throttling does **not** flip `navigator.onLine`, so the offline banner will not
+appear under it. The banner is driven by the `offline` event and is covered by
+`home.test.tsx`.
+
 ### The tests need their own database (P-31)
 
 The integration suites write, and they clean nothing up. Sharing one database

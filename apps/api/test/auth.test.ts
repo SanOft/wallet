@@ -5,7 +5,7 @@ import { SignJWT } from "jose"
 import request from "supertest"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
-import { REFRESH_COOKIE } from "../src/adapters/http/cookies.js"
+import { REFRESH_COOKIE, SESSION_HINT_COOKIE } from "../src/adapters/http/cookies.js"
 import { attemptSubject, hashRefreshToken, hashSecret, verifySecret } from "../src/infra/crypto.js"
 import { createTokenService } from "../src/infra/jwt.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
@@ -199,6 +199,60 @@ describe.skipIf(!hasDatabase)("registration (FR-1)", () => {
     // No TLS on localhost, so `Secure` would make the browser drop it.
     expect(cookie).not.toMatch(/Secure/i)
     expect(Object.keys(res.body)).toEqual(["accessToken", "expiresIn", "user"])
+  })
+
+  /**
+   * Every `Set-Cookie`, as a list.
+   *
+   * Node types the header as `string | string[]` because HTTP allows either,
+   * and a response that happens to carry one cookie would otherwise be
+   * iterated a character at a time — a failure that reads as "the cookie is
+   * missing".
+   */
+  function setCookies(res: { headers: Record<string, unknown> }): string[] {
+    const raw = res.headers["set-cookie"]
+    if (Array.isArray(raw)) return raw as string[]
+    return typeof raw === "string" ? [raw] : []
+  }
+
+  it("sets a readable hint beside it, carrying nothing", async () => {
+    const { app } = buildApp(prisma, { ...process.env })
+    const res = await request(app).post("/api/auth/register").send(registration())
+
+    const hint = setCookies(res).find((value) => value.startsWith(`${SESSION_HINT_COOKIE}=`)) ?? ""
+
+    expect(hint).not.toBe("")
+    /*
+     * Readable on purpose. The refresh cookie is `httpOnly`, so a client had
+     * no way to tell "signed out" from "signed in" without asking and being
+     * refused — a guaranteed 401 on every anonymous page load.
+     */
+    expect(hint).not.toMatch(/HttpOnly/i)
+    // Readable on the app's own pages, not only under /api/auth.
+    expect(hint).toMatch(/Path=\//i)
+    expect(hint).toMatch(/SameSite=Strict/i)
+
+    // It says "1" and nothing else. Anything derived from the token would make
+    // a readable cookie into a credential.
+    expect(hint.split(";")[0]).toBe(`${SESSION_HINT_COOKIE}=1`)
+    expect(hint).not.toContain(res.body.accessToken)
+  })
+
+  it("clears the hint together with the cookie on logout", async () => {
+    const { app } = buildApp(prisma, { ...process.env })
+    const registered = await request(app).post("/api/auth/register").send(registration())
+    const cookie = registered.headers["set-cookie"]?.[0]?.split(";")[0] ?? ""
+
+    const out = await request(app).post("/api/auth/logout").set("cookie", cookie)
+    const cleared = setCookies(out)
+
+    /*
+     * Both, or neither is any use. A hint left behind after logout sends the
+     * next visit into exactly the doomed refresh call the hint exists to
+     * avoid — and it would do it forever, because nothing else ever clears it.
+     */
+    expect(cleared.some((value) => value.startsWith(`${REFRESH_COOKIE}=`))).toBe(true)
+    expect(cleared.some((value) => value.startsWith(`${SESSION_HINT_COOKIE}=`))).toBe(true)
   })
 
   it("marks the cookie Secure in production (FR-2.4)", async () => {

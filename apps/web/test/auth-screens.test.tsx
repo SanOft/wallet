@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { App } from "../src/app/App.js"
 import { resetRefreshState } from "../src/app/baseQuery.js"
 import { resetSessionRestore } from "../src/features/auth/useSessionRestore.js"
+import { clearSessionHint, giveSessionHint } from "./renderApp.js"
 
 /**
  * §13.4's two screens, and the states that make them correct rather than
@@ -38,6 +39,9 @@ const LONG_ENOUGH = ["orbit", "walnut", "lantern", "quiet"].join("-")
 beforeEach(() => {
   resetRefreshState()
   resetSessionRestore()
+  // Anonymous by default: no hint, so the app does not ask. The one test that
+  // needs a session says so.
+  clearSessionHint()
   window.history.pushState({}, "", "/login")
 
   vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
@@ -166,7 +170,9 @@ describe("registration (§13.4)", () => {
     script = () => SIGNED_OUT
     await showRegister()
 
-    expect(screen.getByText(/hech qachon PIN yoki SMS koddan so'ramaydi/i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/hech qachon PIN yoki SMS kodni yuborishingizni so'ramaydi/i),
+    ).toBeInTheDocument()
   })
 
   it("rates a password by length and by nothing else", async () => {
@@ -253,6 +259,7 @@ describe("registration (§13.4)", () => {
 
 describe("someone already signed in", () => {
   it("is sent past the login screen rather than shown it again", async () => {
+    giveSessionHint()
     script = (url) =>
       url === "/api/auth/refresh"
         ? { status: 200, body: { accessToken: "session", user: null } }
