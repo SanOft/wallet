@@ -83,6 +83,35 @@ Lint runs first because it is the cheapest. Build comes next, not last: `apps/*`
 - **Never** commit on a red `verify`.
 - After a fix, re-run the **whole** `verify`, not just the stage that failed. A fix can break something upstream.
 
+### The tests need their own database (P-31)
+
+The integration suites write, and they clean nothing up. Sharing one database
+with the development server means a fixture becomes a row the running app then
+serves to a real session — the rates widget once showed `11900.00` dated
+tomorrow, taken from `rates.test.ts`, for hours — and the accumulation is not
+theoretical either: 3 440 accounts and 2 101 transfers made the I-4 invariant
+check time out until it was rewritten as one aggregate.
+
+Locally, keep two:
+
+```bash
+# once
+createdb wallet_test
+TEST_DATABASE_URL="postgresql://.../wallet_test"   yarn workspace @wallet/api exec prisma migrate deploy
+```
+
+Then in `apps/api/.env`:
+
+| Variable | Points at | Used by |
+|---|---|---|
+| `DATABASE_URL` | `wallet` | the dev server, and anything you demo |
+| `TEST_DATABASE_URL` | `wallet_test` | `yarn test`, when set |
+
+`TEST_DATABASE_URL` is a fallback, not a requirement: unset, the tests use
+`DATABASE_URL` exactly as before. CI leaves it unset on purpose — a throwaway
+container has nothing to protect, and requiring it would fail every job to fix
+a problem those jobs do not have.
+
 ### CI runs the same command
 
 `.github/workflows/ci.yml`:
