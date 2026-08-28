@@ -146,8 +146,8 @@ Every requirement is numbered and verifiable. Acceptance criteria are written in
 
 ## FR-5. Transaction history
 
-- **FR-5.1** Reverse chronological, cursor-based pagination, 20 per page.
-- **FR-5.2** Filters: date range, type (incoming/outgoing), status; filter state lives in the URL.
+- **FR-5.1** Reverse chronological, cursor-based pagination, 20 per page. A client may ask for fewer with `limit` (1–20); the home screen shows five, and fetching twenty to render five is bandwidth spent on a connection NFR-3 exists for.
+- **FR-5.2** Filters: date range, direction (incoming/outgoing), status; filter state lives in the URL. The parameter is `direction`, not `type`: the response already carries `type: P2P | TOPUP`, and one word for two concepts across the client/server boundary is the drift that is cheap to prevent and expensive to unpick.
 - **FR-5.3** Each row: date-time, counterparty, amount, status, transaction ID (for support).
 
 ## FR-6. Anti-fraud controls
@@ -722,7 +722,7 @@ stateDiagram-v2
 | POST   | `/api/accounts/topup`                            | Demo top-up (Idempotency-Key)                        | ✅                    | FR-10          |
 | GET    | `/api/recipients/lookup?phone=`                  | Masked name (20/hour limit)                          | ✅                    | FR-4.9         |
 | POST   | `/api/transfers`                                 | Money transfer (Idempotency-Key mandatory)           | ✅                    | FR-4           |
-| GET    | `/api/transfers?cursor=&from=&to=&type=&status=` | History                                              | ✅                    | FR-5           |
+| GET    | `/api/transfers?cursor=&from=&to=&direction=&status=&limit=` | History                                              | ✅                    | FR-5           |
 | GET    | `/api/rates`                                     | Exchange rates                                       | ✅                    | FR-7           |
 | POST   | `/api/channels/ussd`                             | USSD gateway callback                                | gateway secret header | FR-9           |
 | GET    | `/health`                                        | Service + DB status                                  | —                     | NFR-5          |
