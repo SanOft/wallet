@@ -41,8 +41,17 @@ async function main(): Promise<void> {
   const tokens = createTokenService(env)
   const auth = new AuthService({ prisma, tokens, pepper: env.JWT_SECRET })
 
-  const transfers = new TransferService({ prisma })
-  const rates = new RatesService({ fetcher: fetchCbuRates, store: new RatesRepository(prisma) })
+  const transfers = new TransferService({
+    prisma,
+    warn: (event, cause) => log.warn({ event, err: cause }, "transfer degraded"),
+  })
+  const rates = new RatesService({
+    fetcher: fetchCbuRates,
+    store: new RatesRepository(prisma),
+    // `warn`, not `error`: none of these fail a request, and a log level that
+    // pages someone for a degraded widget is a log level that gets muted.
+    warn: (event, cause) => log.warn({ event, err: cause }, "rates degraded"),
+  })
 
   const app = createApp({ prisma, log, env, auth, tokens, transfers, rates })
   const server = app.listen(env.PORT, () => {

@@ -2,6 +2,7 @@ import { setupListeners } from "@reduxjs/toolkit/query"
 import { type ReactNode, useEffect, useState } from "react"
 import { Provider } from "react-redux"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router"
+import { ErrorBoundary } from "../components/ErrorBoundary.js"
 import { LoginScreen } from "../features/auth/LoginScreen.js"
 import { RegisterScreen } from "../features/auth/RegisterScreen.js"
 import { useSessionRestore } from "../features/auth/useSessionRestore.js"
@@ -181,7 +182,15 @@ export function App() {
   return (
     <Provider store={store}>
       <BrowserRouter>
-        <Shell />
+        {/*
+          The last resort, below the section boundaries: something outside any
+          screen — the router, the tab bar, the session gate — can still throw,
+          and without this the page goes white with no explanation and no way
+          back.
+        */}
+        <ErrorBoundary scope="shell" title="Ilovani ko'rsatib bo'lmadi.">
+          <Shell />
+        </ErrorBoundary>
       </BrowserRouter>
     </Provider>
   )

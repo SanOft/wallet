@@ -1,6 +1,7 @@
 import { createApi } from "@reduxjs/toolkit/query/react"
 import type { AuthResponse, LoginRequest, PublicUser, RegisterRequest } from "@wallet/shared"
 import { baseQueryWithReauth } from "../../app/baseQuery.js"
+import { reportUnexpected } from "../../lib/report.js"
 import { credentialsReceived, signedOut } from "./authSlice.js"
 
 /**
@@ -26,8 +27,11 @@ export const authApi = createApi({
         try {
           const { data } = await queryFulfilled
           dispatch(credentialsReceived({ accessToken: data.accessToken, user: data.user }))
-        } catch {
-          // The form renders the error; there is nothing to store.
+        } catch (error) {
+          // The form renders what it knows how to explain. Anything else — a
+          // 500, an error shape nobody planned for — would otherwise vanish
+          // between here and the generic sentence the user sees.
+          reportUnexpected("auth:register", error, ["VALIDATION_ERROR", "REGISTRATION_FAILED"])
         }
       },
     }),
@@ -60,8 +64,15 @@ export const authApi = createApi({
         try {
           const { data } = await queryFulfilled
           dispatch(credentialsReceived({ accessToken: data.accessToken, user: data.user }))
-        } catch {
-          // The form renders the error; there is nothing to store.
+        } catch (error) {
+          // A wrong password and a lockout are the ordinary paths through this
+          // form and are not reported: a console full of expected failures is
+          // a console nobody reads.
+          reportUnexpected("auth:login", error, [
+            "AUTH_INVALID_CREDENTIALS",
+            "AUTH_LOCKED",
+            "VALIDATION_ERROR",
+          ])
         }
       },
     }),

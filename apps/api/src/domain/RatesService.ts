@@ -53,9 +53,25 @@ export function memoryRatesStore(): RatesStore {
   }
 }
 
+/**
+ * Where a swallowed failure goes.
+ *
+ * This service catches three things and carries on, and each is right on its
+ * own: the upstream being down is the condition FR-7.2 describes, and a cache
+ * that cannot be read or written must not take the endpoint with it. What is
+ * wrong is doing all three in silence — a deployment whose database has been
+ * refusing writes for a week looks identical to one that is healthy, and the
+ * only symptom is a `stale` flag nobody is watching.
+ *
+ * A callback rather than a logger, because the domain does not get to know
+ * about pino (§8.3). The adapter passes one in.
+ */
+export type RatesWarning = (event: string, cause: unknown) => void
+
 export interface RatesServiceDependencies {
   readonly fetcher: RateFetcher
   readonly store: RatesStore
+  readonly warn?: RatesWarning
   readonly now?: () => Date
   readonly ttlMinutes?: number
 }
@@ -63,6 +79,7 @@ export interface RatesServiceDependencies {
 export class RatesService {
   readonly #fetch: RateFetcher
   readonly #store: RatesStore
+  readonly #warn: RatesWarning
   readonly #now: () => Date
   readonly #ttlMs: number
 
@@ -88,11 +105,13 @@ export class RatesService {
   constructor({
     fetcher,
     store,
+    warn = () => {},
     now = () => new Date(),
     ttlMinutes = RATES_TTL_MINUTES,
   }: RatesServiceDependencies) {
     this.#fetch = fetcher
     this.#store = store
+    this.#warn = warn
     this.#now = now
     this.#ttlMs = ttlMinutes * 60 * 1000
   }
@@ -137,11 +156,15 @@ export class RatesService {
       this.#cached = snapshot
       await this.#writeStore(snapshot)
       return snapshot
-    } catch {
-      // Deliberately swallowed rather than rethrown. The upstream being down
-      // is not an error condition of this API — it is the condition FR-7.2
-      // describes — and logging it belongs to the caller that knows the
-      // request id.
+    } catch (cause) {
+      /*
+       * Not an error condition of this API — it is the condition FR-7.2
+       * describes — but still worth recording. The difference between "the
+       * bank was briefly unreachable" and "the bank has been unreachable since
+       * Tuesday" is invisible from the response, and only the second one is
+       * something to act on.
+       */
+      this.#warn("rates.upstream_unreachable", cause)
       if (cached) return { ...cached, stale: true }
 
       throw new DomainError(
@@ -156,10 +179,12 @@ export class RatesService {
   async #readStore(): Promise<RatesSnapshot | null> {
     try {
       return await this.#store.read()
-    } catch {
-      // An unreadable store is an empty one. The alternative is refusing to
-      // serve rates because a cache is broken, which inverts what a cache is
-      // for.
+    } catch (cause) {
+      // An unreadable store is an empty one: refusing to serve rates because a
+      // cache is broken inverts what a cache is for. Recorded, because the
+      // consequence — every instance paying its own upstream request, forever
+      // — is expensive and produces no other symptom.
+      this.#warn("rates.store_unreadable", cause)
       return null
     }
   }
@@ -167,9 +192,12 @@ export class RatesService {
   async #writeStore(snapshot: RatesSnapshot): Promise<void> {
     try {
       await this.#store.write(snapshot)
-    } catch {
+    } catch (cause) {
       // The value is already in hand and already correct; failing the request
-      // now would discard a good answer over a bookkeeping error.
+      // now would discard a good answer over a bookkeeping error. Recorded,
+      // because a store that never accepts a write is a fallback that will not
+      // be there when FR-7.2 needs it, and nothing else would ever say so.
+      this.#warn("rates.store_unwritable", cause)
     }
   }
 }
