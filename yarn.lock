@@ -2087,6 +2087,7 @@ __metadata:
     react-redux: "npm:^9.3.0"
     react-router: "npm:^8.3.0"
     tailwindcss: "npm:^4.3.3"
+    tsx: "npm:^4.23.12"
     typescript: "npm:^7.0.2"
     vite: "npm:^8.2.2"
     vitest: "npm:^4.1.11"

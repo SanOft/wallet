@@ -36,12 +36,12 @@ jobs:
       JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # gitleaks scans commit history, so a shallow clone would check only
           # the tip and report clean on a secret added two commits ago.
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: corepack enable
