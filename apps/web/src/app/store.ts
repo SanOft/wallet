@@ -1,7 +1,18 @@
 import { configureStore } from "@reduxjs/toolkit"
-import { setupListeners } from "@reduxjs/toolkit/query"
 import { authApi } from "../features/auth/api.js"
 import { authSlice } from "../features/auth/authSlice.js"
+import { walletApi } from "./api.js"
+
+/*
+ * Imported for their side effect: `injectEndpoints` runs at module load, and a
+ * store built without these has a `walletApi` slice with no endpoints in it.
+ * The alternative — importing them from the components that use them — works
+ * until a test renders one component and the reducer has never heard of the
+ * others.
+ */
+import "../features/accounts/api.js"
+import "../features/history/api.js"
+import "../features/rates/api.js"
 
 /**
  * One store, assembled here so a test can build its own with the same shape.
@@ -16,20 +27,11 @@ export function makeStore() {
     reducer: {
       [authSlice.reducerPath]: authSlice.reducer,
       [authApi.reducerPath]: authApi.reducer,
+      [walletApi.reducerPath]: walletApi.reducer,
     },
-    middleware: (getDefault) => getDefault().concat(authApi.middleware),
+    middleware: (getDefault) => getDefault().concat(authApi.middleware, walletApi.middleware),
   })
 
-  /**
-   * Refetch on reconnect, which is half of what FR-8 asks of a client on a bad
-   * connection: when the network returns, what is on screen should stop being
-   * whatever was true before it went away.
-   *
-   * `refetchOnFocus` is deliberately left off — a wallet that reloads every
-   * time the user switches apps spends their data allowance to show them the
-   * same number.
-   */
-  setupListeners(store.dispatch)
   return store
 }
 

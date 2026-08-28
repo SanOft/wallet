@@ -173,6 +173,55 @@ describe("surviving a restart (P-30)", () => {
     expect(served.stale).toBe(false)
   })
 
+  it("does not treat a reading stamped in the future as fresh", async () => {
+    const store = memoryRatesStore()
+    // A row written by an instance whose clock runs ahead. Two machines
+    // disagreeing by seconds is ordinary; by an hour is a wrong timezone.
+    await store.write({
+      rates: [USD],
+      fetchedAt: new Date("2026-08-29T10:00:00.000Z"),
+      stale: false,
+    })
+    const fetcher = vi.fn().mockResolvedValue([LATER])
+
+    const service = new RatesService({
+      fetcher,
+      store,
+      now: () => new Date("2026-08-28T10:00:00.000Z"),
+    })
+    const served = await service.current()
+
+    /*
+     * Without the check this is the permanent failure: `now - fetchedAt` is
+     * negative, every comparison against the TTL passes, and the cache never
+     * expires again for the life of that row. Observed in the browser — the
+     * widget showed one rate for hours and nothing said why.
+     */
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(served.rates).toEqual([LATER])
+  })
+
+  it("still falls back to a future-stamped reading when the upstream is down", async () => {
+    const store = memoryRatesStore()
+    await store.write({
+      rates: [USD],
+      fetchedAt: new Date("2026-08-29T10:00:00.000Z"),
+      stale: false,
+    })
+
+    const service = new RatesService({
+      fetcher: () => Promise.reject(new Error("down")),
+      store,
+      now: () => new Date("2026-08-28T10:00:00.000Z"),
+    })
+    const served = await service.current()
+
+    // Not trusted as current, but still better than nothing — which is the
+    // whole distinction `stale` exists to carry.
+    expect(served.rates).toEqual([USD])
+    expect(served.stale).toBe(true)
+  })
+
   it("treats a store it cannot read as an empty one", async () => {
     const store = {
       read: () => Promise.reject(new Error("database is down")),
