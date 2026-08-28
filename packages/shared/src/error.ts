@@ -47,6 +47,13 @@ export const fieldErrorCodeSchema = z.enum([
   "password.too_long",
   "name.invalid",
   "field.required",
+  /*
+   * A malformed pagination cursor. Not something a person can type — it is a
+   * token the client is handed and must return unchanged — so it appears here
+   * only because §12.3 has one shape for "this field is wrong", and inventing
+   * a second shape for protocol arguments would double the client's parsing.
+   */
+  "cursor.invalid",
   "limit.per_operation",
   "limit.daily",
   "limit.new_recipient",
