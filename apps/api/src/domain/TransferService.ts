@@ -173,17 +173,23 @@ export interface HistoryPage {
   readonly nextCursor: string | null
 }
 
+/** Same seam as `RatesService`: the domain reports, the adapter logs (§8.3). */
+export type TransferWarning = (event: string, cause: unknown) => void
+
 export interface TransferServiceDependencies {
   readonly prisma: PrismaClient
+  readonly warn?: TransferWarning
   readonly now?: () => Date
 }
 
 export class TransferService {
   readonly #prisma: PrismaClient
+  readonly #warn: TransferWarning
   readonly #now: () => Date
 
-  constructor({ prisma, now = () => new Date() }: TransferServiceDependencies) {
+  constructor({ prisma, warn = () => {}, now = () => new Date() }: TransferServiceDependencies) {
     this.#prisma = prisma
+    this.#warn = warn
     this.#now = now
   }
 
@@ -786,8 +792,16 @@ export class TransferService {
           },
         })
       })
-    } catch {
-      // Deliberately swallowed; see the docblock.
+    } catch (cause) {
+      /*
+       * Still swallowed — the original refusal is what the caller needs, and
+       * failing to record it must not replace a precise error with a vague one.
+       *
+       * But not silent. Without this record the same idempotency key executes
+       * again on retry, which is the one guarantee FR-4.4 exists to make; a
+       * store that keeps failing here quietly turns idempotency off.
+       */
+      this.#warn("transfer.outcome_not_recorded", cause)
     }
   }
 

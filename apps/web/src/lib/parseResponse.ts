@@ -1,4 +1,5 @@
 import type * as z from "zod"
+import { reportError } from "./report.js"
 
 /**
  * Checks a response against the contract before anything renders it.
@@ -18,6 +19,27 @@ import type * as z from "zod"
  * Turning it into a query error instead means the screen says it could not
  * load the balance, which is the truth.
  */
-export function parseResponse<T>(schema: z.ZodType<T>) {
-  return (response: unknown): T => schema.parse(response)
+export function parseResponse<T>(schema: z.ZodType<T>, scope: string) {
+  return (response: unknown): T => {
+    const parsed = schema.safeParse(response)
+
+    if (!parsed.success) {
+      /*
+       * Reported before it is thrown. The screen turns this into "could not
+       * load", which is right for the user and useless for anyone diagnosing
+       * it: the interesting part is *which field* the server and client
+       * disagree about, and that is discarded the moment this becomes a
+       * generic query error.
+       */
+      reportError(`contract:${scope}`, parsed.error, {
+        issues: parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          code: issue.code,
+        })),
+      })
+      throw parsed.error
+    }
+
+    return parsed.data
+  }
 }

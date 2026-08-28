@@ -11,6 +11,8 @@
  * makes people distrust the numbers next to it.
  */
 
+import { reportError } from "./report.js"
+
 function pad(value: number): string {
   return value.toString().padStart(2, "0")
 }
@@ -18,9 +20,12 @@ function pad(value: number): string {
 export function formatWhen(iso: string): string {
   const at = new Date(iso)
   if (Number.isNaN(at.getTime())) {
-    // A date we cannot read is not rendered as "Invalid Date" next to an
-    // amount. An empty slot is honest; a broken one looks like the amount
-    // might be broken too.
+    // Not rendered as "Invalid Date" next to an amount: an empty slot is
+    // honest, a broken one makes the amount beside it look suspect too. But
+    // the server promised ISO 8601 (§12.2), so an unreadable value is a
+    // contract fault and saying nothing about it would leave a blank column
+    // nobody could explain.
+    reportError("datetime:unreadable", new Error("value is not a date"), { value: iso })
     return ""
   }
 

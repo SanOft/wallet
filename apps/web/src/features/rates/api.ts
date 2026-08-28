@@ -16,7 +16,7 @@ export const ratesApi = walletApi.injectEndpoints({
   endpoints: (build) => ({
     rates: build.query<RatesResponse, void>({
       query: () => "/rates",
-      transformResponse: parseResponse(ratesResponseSchema),
+      transformResponse: parseResponse(ratesResponseSchema, "rates"),
       providesTags: ["Rates"],
     }),
   }),

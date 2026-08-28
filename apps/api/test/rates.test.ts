@@ -222,6 +222,51 @@ describe("surviving a restart (P-30)", () => {
     expect(served.stale).toBe(true)
   })
 
+  it("reports every failure it swallows", async () => {
+    const warn = vi.fn()
+    const store = {
+      read: () => Promise.reject(new Error("database is down")),
+      write: () => Promise.reject(new Error("database is down")),
+    }
+
+    const service = new RatesService({
+      fetcher: () => Promise.resolve([USD]),
+      store,
+      warn,
+    })
+    await service.current()
+
+    /*
+     * Three things go wrong here and the request still succeeds, which is
+     * correct — and is exactly why they have to be recorded. A deployment
+     * whose database has refused writes for a week is indistinguishable from a
+     * healthy one from the outside.
+     */
+    expect(warn.mock.calls.map((call) => call[0])).toEqual([
+      "rates.store_unreadable",
+      "rates.store_unwritable",
+    ])
+  })
+
+  it("reports an unreachable upstream even though FR-7.2 expects one", async () => {
+    const warn = vi.fn()
+    const store = memoryRatesStore()
+    await store.write({ rates: [USD], fetchedAt: new Date(), stale: false })
+
+    const service = new RatesService({
+      fetcher: () => Promise.reject(new Error("down")),
+      store,
+      warn,
+      now: () => new Date(Date.now() + 2 * 60 * 60 * 1000),
+    })
+    const served = await service.current()
+
+    // "Briefly unreachable" and "unreachable since Tuesday" produce the same
+    // response, and only one of them is something to act on.
+    expect(served.stale).toBe(true)
+    expect(warn).toHaveBeenCalledWith("rates.upstream_unreachable", expect.anything())
+  })
+
   it("treats a store it cannot read as an empty one", async () => {
     const store = {
       read: () => Promise.reject(new Error("database is down")),

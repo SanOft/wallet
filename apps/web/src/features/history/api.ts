@@ -16,7 +16,7 @@ export const historyApi = walletApi.injectEndpoints({
   endpoints: (build) => ({
     recentTransfers: build.query<HistoryResponse, void>({
       query: () => ({ url: "/transfers", params: { limit: RECENT_COUNT } }),
-      transformResponse: parseResponse(historyResponseSchema),
+      transformResponse: parseResponse(historyResponseSchema, "history"),
       providesTags: ["History"],
     }),
   }),

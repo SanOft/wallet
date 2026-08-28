@@ -13,7 +13,7 @@ export const accountsApi = walletApi.injectEndpoints({
   endpoints: (build) => ({
     accounts: build.query<AccountsResponse, void>({
       query: () => "/accounts",
-      transformResponse: parseResponse(accountsResponseSchema),
+      transformResponse: parseResponse(accountsResponseSchema, "accounts"),
       providesTags: ["Accounts"],
     }),
 

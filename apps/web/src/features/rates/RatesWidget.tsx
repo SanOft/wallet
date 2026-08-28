@@ -1,6 +1,8 @@
 import type { Rate } from "@wallet/shared"
 import { TrendingDown, TrendingUp } from "lucide-react"
+import { useEffect } from "react"
 import { Skeleton } from "../../components/Skeleton.js"
+import { reportError } from "../../lib/report.js"
 import { useRatesQuery } from "./api.js"
 
 /**
@@ -57,10 +59,21 @@ function RateRow(props: { readonly rate: Rate }) {
 }
 
 export function RatesWidget() {
-  const { data, isLoading, isError } = useRatesQuery()
+  const { data, isLoading, isError, error } = useRatesQuery()
 
-  // Gone rather than broken. FR-7.3 makes these numbers decoration, and
-  // decoration that shouts is worse than decoration that is absent.
+  /*
+   * Reported even though the user is told nothing.
+   *
+   * Hiding the widget is right for them — FR-7.3 makes these numbers
+   * decoration, and decoration that shouts is worse than decoration that is
+   * absent. But a widget that disappears silently is a widget that can be
+   * broken for a month before anyone notices, and "the rates stopped working
+   * at some point" is not a bug report anyone can act on.
+   */
+  useEffect(() => {
+    if (isError) reportError("rates:hidden", error)
+  }, [isError, error])
+
   if (isError) return null
 
   return (

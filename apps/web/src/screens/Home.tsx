@@ -1,4 +1,5 @@
 import { ThemeToggle } from "../app/ThemeToggle.js"
+import { ErrorBoundary } from "../components/ErrorBoundary.js"
 import { BalanceCard } from "../features/accounts/BalanceCard.js"
 import { TopUpButton } from "../features/accounts/TopUpButton.js"
 import { RecentTransactions } from "../features/history/RecentTransactions.js"
@@ -26,7 +27,15 @@ export function Home() {
         <ThemeToggle />
       </header>
 
-      <BalanceCard />
+      {/*
+        One boundary per section, not one for the page. A single boundary at
+        the root turns any fault into "the whole app is down", which is both
+        less true and less useful than "the rates failed, your balance is
+        right there".
+      */}
+      <ErrorBoundary scope="balance" title="Balansni ko'rsatib bo'lmadi.">
+        <BalanceCard />
+      </ErrorBoundary>
 
       {/*
         §13.3 puts a "Send money" call to action here, and it is deliberately
@@ -36,11 +45,17 @@ export function Home() {
         buttons cannot be trusted, on the screen where trust is being
         established.
       */}
-      <TopUpButton />
+      <ErrorBoundary scope="topup" title="To'ldirish tugmasini ko'rsatib bo'lmadi.">
+        <TopUpButton />
+      </ErrorBoundary>
 
-      <RecentTransactions />
+      <ErrorBoundary scope="history" title="Amaliyotlarni ko'rsatib bo'lmadi.">
+        <RecentTransactions />
+      </ErrorBoundary>
 
-      <RatesWidget />
+      <ErrorBoundary scope="rates" title="Kurslarni ko'rsatib bo'lmadi.">
+        <RatesWidget />
+      </ErrorBoundary>
     </div>
   )
 }
