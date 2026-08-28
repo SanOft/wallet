@@ -237,3 +237,31 @@ model AuthAttempt {
   @@index([subject, createdAt])
   @@map("auth_attempts")
 }
+
+/// The last exchange rates this deployment successfully read (FR-7.2, P-30).
+///
+/// A cache in a table, which is unusual enough to justify. FR-7.2 promises the
+/// last known value when the central bank is unreachable; an in-process cache
+/// keeps that promise only for a process that has been running, and P-27
+/// records that a free-tier instance sleeps, so a cold start with the bank down
+/// had no fallback at all. It also lets a second instance reuse the first's
+/// reading rather than each paying its own request.
+///
+/// One row, not an append-only log. FR-7.3 makes these numbers informational —
+/// nothing is priced or decided from them — so there is no question anyone
+/// would ask of a history. When conversion arrives it will need to record which
+/// rate applied to which transaction, which is a different table from this one.
+model RatesSnapshot {
+  /// Always `ROW_ID`. A primary key with one legal value is how "exactly one
+  /// row" is stated to the database rather than hoped for in the application.
+  id        String   @id
+  /// The `Rate[]` the client contract describes, validated on the way back out
+  /// — a row written by an older version of this code is not to be trusted
+  /// simply because we wrote it.
+  payload   Json
+  /// When the upstream was read, not when the row was written. This is the
+  /// date the user is shown beside a stale value.
+  fetchedAt DateTime @db.Timestamptz(3)
+
+  @@map("rates_snapshots")
+}

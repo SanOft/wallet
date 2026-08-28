@@ -3,6 +3,7 @@ import express, { type Express } from "express"
 import { pinoHttp } from "pino-http"
 import type { Env } from "../../config/env.js"
 import type { AuthService } from "../../domain/AuthService.js"
+import type { RatesService } from "../../domain/RatesService.js"
 import type { TransferService } from "../../domain/TransferService.js"
 import type { TokenService } from "../../infra/jwt.js"
 import { type Logger, serializeError, serializeRequest } from "../../infra/logger.js"
@@ -11,6 +12,7 @@ import { requestId } from "./middleware/requestId.js"
 import { accountRouter } from "./routes/accounts.js"
 import { authRouter } from "./routes/auth.js"
 import { healthRouter } from "./routes/health.js"
+import { rateRouter } from "./routes/rates.js"
 import { recipientRouter } from "./routes/recipients.js"
 import { transferRouter } from "./routes/transfers.js"
 import {
@@ -30,6 +32,7 @@ export interface AppDependencies {
   readonly auth: AuthService
   readonly tokens: TokenService
   readonly transfers: TransferService
+  readonly rates: RatesService
   /** Test seam for time-window rules; production uses the real clock. */
   readonly now?: () => number
 }
@@ -62,6 +65,7 @@ export function createApp({
   auth,
   tokens,
   transfers,
+  rates,
   now: nowFn,
 }: AppDependencies): Express {
   const app = express()
@@ -142,6 +146,7 @@ export function createApp({
   app.use(transferRouter({ transfers, tokens, prisma }))
   app.use(accountRouter({ prisma, transfers, tokens }))
   app.use(recipientRouter({ prisma, tokens, ...(nowFn ? { now: nowFn } : {}) }))
+  app.use(rateRouter({ rates, tokens }))
 
   app.use(notFoundHandler)
 
