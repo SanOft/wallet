@@ -34,6 +34,23 @@ export const authApi = createApi({
 
     login: build.mutation<AuthResponse, LoginRequest>({
       query: (body) => ({ url: "/auth/login", method: "POST", body }),
+      /**
+       * §12.3 pairs `AUTH_LOCKED` with a `Retry-After` header, and the screen
+       * renders "try again in X" from it. Headers are not on the mutation
+       * result, so the number is lifted here — the one hook RTK Query gives
+       * that can still see the response.
+       *
+       * A missing or unparsable header becomes `undefined` rather than 0: zero
+       * would render as "try again in 0 seconds", which invites the retry the
+       * backoff exists to prevent.
+       */
+      transformErrorResponse: (error, meta) => {
+        const header = meta?.response?.headers.get("retry-after")
+        const seconds = header === null || header === undefined ? Number.NaN : Number(header)
+        return Number.isFinite(seconds) && seconds > 0
+          ? { ...error, retryAfterSeconds: seconds }
+          : error
+      },
       onQueryStarted: async (_arg, { dispatch, queryFulfilled }) => {
         // Caught, not left to float. `queryFulfilled` rejects on any failure —
         // a wrong password is the ordinary case — and an uncaught rejection
