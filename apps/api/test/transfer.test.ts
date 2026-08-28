@@ -74,6 +74,9 @@ describe.skipIf(!hasDatabase)("money transfer (FR-4)", () => {
         data: {
           fromAccountId: treasuryAccountId,
           toAccountId: accountId,
+          // A top-up is initiated by the recipient: the money leaves the
+          // treasury, which belongs to nobody in particular (§9.4).
+          initiatedBy: target.userId,
           amount,
           type: "TOPUP",
           channel: "WEB",
@@ -208,6 +211,62 @@ describe.skipIf(!hasDatabase)("money transfer (FR-4)", () => {
 
     const account = await prisma.account.findUniqueOrThrow({ where: { id: sender.accountId } })
     expect(account.balance).toBe(700_000n)
+  })
+
+  it("lets two people hold the same key at the same time (P-8)", async () => {
+    /*
+     * The key namespace used to be global: `idempotency_records.key` was the
+     * whole primary key, and `transfers.idempotencyKey` carried its own global
+     * unique constraint. Nothing leaked — the service already refuses to replay
+     * a record owned by somebody else — but a client that reuses a fixed value,
+     * or picks one deliberately, could turn other people's transfers into 409s.
+     * A payment somebody else can block is a payment that does not happen.
+     */
+    const alice = await newUser()
+    const bob = await newUser()
+    const recipient = await newUser()
+    await fund(alice.accountId, 1_000_000n)
+    await fund(bob.accountId, 1_000_000n)
+
+    const shared = randomUUID()
+    const first = await send(
+      alice.app,
+      alice.token,
+      { phone: recipient.phone, amount: "300000" },
+      shared,
+    )
+    const second = await send(
+      bob.app,
+      bob.token,
+      { phone: recipient.phone, amount: "300000" },
+      shared,
+    )
+
+    expect(first.status).toBe(201)
+    expect(second.status, "the second user was blocked by the first").toBe(201)
+    expect(second.body.id).not.toBe(first.body.id)
+  })
+
+  it("still refuses the same key twice from one person", async () => {
+    // The scoping must not weaken FR-4.4 for the case it exists for.
+    const sender = await newUser()
+    const recipient = await newUser()
+    await fund(sender.accountId, 1_000_000n)
+
+    const key = randomUUID()
+    const body = { phone: recipient.phone, amount: "300000" }
+    const first = await send(sender.app, sender.token, body, key)
+    const replay = await send(sender.app, sender.token, body, key)
+
+    expect(first.status).toBe(201)
+    expect(replay.status).toBe(201)
+    // A replay, not a second transfer.
+    expect(replay.body.id).toBe(first.body.id)
+
+    const count = await prisma.transfer.count({
+      where: { fromAccountId: sender.accountId, type: "P2P" },
+    })
+    expect(count).toBe(1)
   })
 
   it("rejects the same key with a different payload (FR-4.4)", async () => {
@@ -492,6 +551,7 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
           data: {
             fromAccountId: treasuryAccountId,
             toAccountId: account.id,
+            initiatedBy: account.userId,
             amount: funded,
             type: "TOPUP",
             channel: "WEB",
@@ -665,7 +725,7 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
     })
 
     await prisma.idempotencyRecord.update({
-      where: { key },
+      where: { userId_key: { userId: sender.userId, key } },
       data: { expiresAt: new Date(Date.now() - 1000) },
     })
 

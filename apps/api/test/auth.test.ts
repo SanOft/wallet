@@ -359,7 +359,11 @@ describe.skipIf(!hasDatabase)("login (FR-2.2, S-5)", () => {
     return { a: lo, b: hi, ratio: Math.max(lo, hi) / Math.max(Math.min(lo, hi), 0.001) }
   }
 
-  it("S-5: an unknown number is indistinguishable from a wrong password", async () => {
+  // Thirty real argon2 verifies each, by design: the measurement is the point,
+  // and the default five seconds is a budget for tests that do not hash.
+  it("S-5: an unknown number is indistinguishable from a wrong password", {
+    timeout: 30_000,
+  }, async () => {
     const { app } = buildApp(prisma, { ...process.env })
 
     const unknownArm = { phone: uniquePhone(), password: PASSWORD }
@@ -384,7 +388,9 @@ describe.skipIf(!hasDatabase)("login (FR-2.2, S-5)", () => {
     ).toBeLessThan(TIMING_BOUND)
   })
 
-  it("the SYSTEM account is not identifiable by how fast it fails", async () => {
+  it("the SYSTEM account is not identifiable by how fast it fails", {
+    timeout: 30_000,
+  }, async () => {
     // Its passwordHash is a sentinel, not a digest (§9.4). A `verify` that
     // gives up without spending the time made the treasury — the mint for all
     // demo funds — answer 3.8x faster than any other number, in one request.
@@ -408,15 +414,18 @@ describe.skipIf(!hasDatabase)("login (FR-2.2, S-5)", () => {
     // registered numbers measurably slower — an enumeration oracle (§11.2).
     const { app } = buildApp(prisma, { ...process.env })
     const stranger = uniquePhone()
+    // Counted for this number alone. Counting the whole table made the test
+    // depend on nothing else writing an attempt between the two reads, which
+    // is not a property any suite sharing a database can offer.
+    const where = { subject: attemptSubject(stranger, testEnv({ ...process.env }).JWT_SECRET) }
 
-    const before = await prisma.authAttempt.count()
+    expect(await prisma.authAttempt.count({ where })).toBe(0)
     await request(app).post("/api/auth/login").send({ phone: stranger, password: PASSWORD })
-    const after = await prisma.authAttempt.count()
 
-    expect(after).toBe(before + 1)
-    const latest = await prisma.authAttempt.findFirst({ orderBy: { createdAt: "desc" } })
-    expect(latest?.userId).toBeNull()
-    expect(latest?.succeeded).toBe(false)
+    const rows = await prisma.authAttempt.findMany({ where })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.userId).toBeNull()
+    expect(rows[0]?.succeeded).toBe(false)
   })
 })
 

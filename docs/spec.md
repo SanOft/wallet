@@ -401,8 +401,8 @@ erDiagram
         datetime createdAt "immutable"
     }
     IDEMPOTENCY_RECORD {
+        uuid userId PK_FK "scoped per client, P-8"
         string key PK "UUID, client-generated"
-        uuid userId FK
         string requestHash "payload SHA-256"
         json response "stored response"
         int statusCode
@@ -432,6 +432,8 @@ erDiagram
 | `REFRESH_TOKEN.tokenHash` — the raw token is never stored in the DB | Even a DB leak cannot hijack sessions                                                       |
 | `familyId`                                                          | One chain per device; on detected reuse the whole family is killed via `revokedAt` (FR-2.7) |
 | `IDEMPOTENCY_RECORD.requestHash`                                    | Distinguishes same key + different payload (FR-4.4 → `409`)                                 |
+| `IDEMPOTENCY_RECORD` keyed on `(userId, key)`                       | The key alone put every client in one namespace, so one could occupy a value another was about to use — a denial of service on the money path (P-8) |
+| `TRANSFER.initiatedBy`                                              | Who asked. Not derivable from the accounts: a top-up leaves the treasury, so its sender belongs to nobody. Scopes the transfer's own idempotency key |
 | `LEDGER_ENTRY.balanceAfter`                                         | Balance snapshot on every entry — makes audits O(1) and simplifies reconciliation           |
 | `TRANSFER.channel`                                                  | For channel limits (FR-6.1) and analytics                                                   |
 | `AUTH_ATTEMPT` as a separate table                                  | Tracks lockout counts without adding columns to `USER`; history is retained for audit       |
