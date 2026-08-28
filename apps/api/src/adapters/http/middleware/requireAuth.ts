@@ -6,6 +6,12 @@ declare module "express-serve-static-core" {
   interface Request {
     /** Set by `requireAuth`. Absent on unauthenticated routes. */
     userId?: string
+    /**
+     * When the presented token was minted, in seconds. Read by
+     * `requireCurrentSession` and by nothing else — a route that needs to know
+     * how old its caller's token is needs that middleware, not this field.
+     */
+    tokenIssuedAt?: number
   }
 }
 
@@ -35,6 +41,7 @@ export function requireAuth(tokens: TokenService): RequestHandler {
           return
         }
         req.userId = claims.userId
+        req.tokenIssuedAt = claims.issuedAt
         next()
       })
       .catch(next)

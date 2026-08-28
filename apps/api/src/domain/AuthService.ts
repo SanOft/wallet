@@ -298,6 +298,7 @@ export class AuthService {
       // throwing would roll the revocation back, which is the failure mode that
       // makes a "we handled it" comment quietly false.
       await this.#revokeFamily(outcome.familyId, now)
+      await this.#invalidateAccessTokens(outcome.familyId, now)
       throw new RefreshTokenReusedError()
     }
 
@@ -325,12 +326,37 @@ export class AuthService {
     return user ? toPublicUser(user) : null
   }
 
+  /** Ends one device's chain. Called by logout and by reuse detection alike. */
   async #revokeFamily(familyId: string, at: Date): Promise<void> {
     // One UPDATE over a set rather than a row: every live token in the family
     // dies in a single statement, so there is no window where some survive.
     await this.#prisma.refreshToken.updateMany({
       where: { familyId, revokedAt: null },
       data: { revokedAt: at },
+    })
+  }
+
+  /**
+   * Ends every *access* token the user holds, everywhere (P-16).
+   *
+   * Separate from revoking a family, and called only when reuse is detected.
+   * A JWT is self-contained, so revoking the family stops the thief refreshing
+   * but leaves the token they already hold working until it expires — FR-2.6
+   * bounds that at fifteen minutes, and `requireCurrentSession` closes it on
+   * the money routes.
+   *
+   * Not folded into `#revokeFamily`, which was the first thing I tried: a
+   * family is one device, this column is every device, so an ordinary logout
+   * would have signed the user out of their phone as well as their laptop. A
+   * test caught it.
+   *
+   * Scoped through the family because the reuse path knows which family was
+   * replayed, and every family belongs to exactly one user.
+   */
+  async #invalidateAccessTokens(familyId: string, at: Date): Promise<void> {
+    await this.#prisma.user.updateMany({
+      where: { refreshTokens: { some: { familyId } } },
+      data: { tokensValidAfter: at },
     })
   }
 

@@ -139,7 +139,7 @@ export function createApp({
 
   app.use(healthRouter(prisma))
   app.use(authRouter({ auth, tokens, env }))
-  app.use(transferRouter({ transfers, tokens }))
+  app.use(transferRouter({ transfers, tokens, prisma }))
   app.use(accountRouter({ prisma, transfers, tokens }))
   app.use(recipientRouter({ prisma, tokens, ...(nowFn ? { now: nowFn } : {}) }))
 

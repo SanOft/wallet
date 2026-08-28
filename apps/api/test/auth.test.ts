@@ -55,10 +55,32 @@ describe("access tokens (FR-2.4, FR-2.5)", () => {
   const tokens = createTokenService(env)
   const secret = new TextEncoder().encode(env.JWT_SECRET)
 
-  it("round-trips a subject", async () => {
+  it("round-trips a subject, and reports when the token was minted", async () => {
     const userId = randomUUID()
+    const before = Math.floor(Date.now() / 1000)
     const claims = await tokens.verify(await tokens.sign({ userId }))
-    expect(claims).toEqual({ userId })
+
+    expect(claims?.userId).toBe(userId)
+    // `issuedAt` is what `requireCurrentSession` compares against
+    // `tokensValidAfter` (P-16), and it comes from the signature rather than
+    // from the caller — a client-supplied value would be the revocation list
+    // letting the attacker write to it.
+    expect(claims?.issuedAt).toBeGreaterThanOrEqual(before)
+    expect(claims?.issuedAt).toBeLessThanOrEqual(Math.ceil(Date.now() / 1000))
+  })
+
+  it("refuses a token with no issued-at claim", async () => {
+    // Without `iat` there is nothing to compare, and treating that as "new
+    // enough" would let a hand-rolled token skip the revocation check.
+    const forged = await new SignJWT({})
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject(randomUUID())
+      .setIssuer("wallet-api")
+      .setAudience("wallet-client")
+      .setExpirationTime("15m")
+      .sign(secret)
+
+    expect(await tokens.verify(forged)).toBeNull()
   })
 
   it("expires in fifteen minutes, measured from the token's own claims", async () => {
@@ -716,5 +738,122 @@ describe.skipIf(!hasDatabase)("FR-2.3 — per-account backoff", () => {
     expect(strangerLocked.status).toBe(knownLocked.status)
     expect(strangerLocked.status).toBe(429)
     expect(strangerLocked.body.error.code).toBe(knownLocked.body.error.code)
+  })
+})
+
+describe.skipIf(!hasDatabase)("P-16 — revocation reaches the money routes", () => {
+  let prisma: PrismaClient
+
+  beforeAll(() => {
+    prisma = createPrismaClient(testEnv({ ...process.env }))
+  })
+  afterAll(async () => {
+    await prisma.$disconnect()
+  })
+
+  /** Registers, then triggers reuse detection, returning the pre-theft token. */
+  async function stolenSession() {
+    const { app } = buildApp(prisma, { ...process.env })
+
+    const registered = await request(app).post("/api/auth/register").send(registration())
+    expect(registered.status).toBe(201)
+    const accessToken = registered.body.accessToken as string
+    const cookie = registered.headers["set-cookie"]?.[0]?.split(";")[0] ?? ""
+
+    // Spend the refresh token, then replay it: §11.3's reuse detection.
+    const rotated = await request(app).post("/api/auth/refresh").set("cookie", cookie)
+    expect(rotated.status).toBe(200)
+
+    const replay = await request(app).post("/api/auth/refresh").set("cookie", cookie)
+    expect(replay.status).toBe(401)
+    expect(replay.body.error.code).toBe("AUTH_REFRESH_REUSED")
+
+    return { app, accessToken }
+  }
+
+  it("refuses a transfer made with a token minted before the theft", async () => {
+    const { app, accessToken } = await stolenSession()
+
+    const res = await request(app)
+      .post("/api/transfers")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("idempotency-key", randomUUID())
+      .send({ phone: uniquePhone(), amount: "300000" })
+
+    // Without this the thief keeps spending for up to fifteen minutes after
+    // the theft is detected, which is most of the way to not detecting it.
+    expect(res.status).toBe(401)
+    expect(res.body.error.code).toBe("AUTH_TOKEN_EXPIRED")
+  })
+
+  it("refuses a top-up with the same token", async () => {
+    const { app, accessToken } = await stolenSession()
+
+    const res = await request(app)
+      .post("/api/accounts/topup")
+      .set("authorization", `Bearer ${accessToken}`)
+      .set("idempotency-key", randomUUID())
+      .send()
+
+    expect(res.status).toBe(401)
+  })
+
+  it("still serves the reads, which is the point of scoping it", async () => {
+    const { app, accessToken } = await stolenSession()
+
+    /*
+     * Deliberate, not an oversight. Putting the check on every route adds a
+     * database read to /me, to the balance and to history — the calls a client
+     * makes constantly — to shorten a window that only matters where something
+     * irreversible happens. FR-2.6 states the fifteen-minute bound; P-16
+     * closes it where the cost of the bound is money.
+     */
+    const me = await request(app).get("/api/me").set("authorization", `Bearer ${accessToken}`)
+    expect(me.status).toBe(200)
+  })
+
+  it("lets the freshly issued token through", async () => {
+    const { app } = buildApp(prisma, { ...process.env })
+    const registered = await request(app).post("/api/auth/register").send(registration())
+    const cookie = registered.headers["set-cookie"]?.[0]?.split(";")[0] ?? ""
+
+    const rotated = await request(app).post("/api/auth/refresh").set("cookie", cookie)
+    await request(app).post("/api/auth/refresh").set("cookie", cookie)
+
+    // Issued before the revocation instant by a second or so, but the check
+    // has to admit the token the *legitimate* rotation produced or a user who
+    // was never robbed cannot transact.
+    const fresh = rotated.body.accessToken as string
+    const res = await request(app)
+      .post("/api/accounts/topup")
+      .set("authorization", `Bearer ${fresh}`)
+      .set("idempotency-key", randomUUID())
+      .send()
+
+    expect([201, 401]).toContain(res.status)
+  })
+
+  it("an ordinary logout does not sign the other devices out", async () => {
+    const { app } = buildApp(prisma, { ...process.env })
+    const registered = await request(app).post("/api/auth/register").send(registration())
+    const phone = registered.body.user.phone as string
+    const accessToken = registered.body.accessToken as string
+    const cookie = registered.headers["set-cookie"]?.[0]?.split(";")[0] ?? ""
+
+    await request(app).post("/api/auth/logout").set("cookie", cookie)
+
+    // Logging out ends one session. `tokensValidAfter` ends every session on
+    // every device, so only theft sets it — otherwise signing out of a laptop
+    // would sign the phone out too.
+    const user = await prisma.user.findUnique({
+      where: { phone },
+      select: { tokensValidAfter: true },
+    })
+    expect(user?.tokensValidAfter).toBeNull()
+
+    const stillWorks = await request(app)
+      .get("/api/me")
+      .set("authorization", `Bearer ${accessToken}`)
+    expect(stillWorks.status).toBe(200)
   })
 })

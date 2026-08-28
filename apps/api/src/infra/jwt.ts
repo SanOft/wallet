@@ -27,10 +27,23 @@ export interface AccessTokenClaims {
   readonly userId: string
 }
 
+/**
+ * What a verified token carries, as opposed to what signing needs.
+ *
+ * `issuedAt` is separate because a caller must never supply it — the point of
+ * P-16's check is that the *server* decides when a token was minted, so a
+ * client-supplied `iat` would be the revocation list letting the attacker
+ * write to it.
+ */
+export interface VerifiedAccessToken extends AccessTokenClaims {
+  /** Seconds since the epoch, as JWT `iat` is defined. */
+  readonly issuedAt: number
+}
+
 export interface TokenService {
   readonly expiresInSeconds: number
   sign(claims: AccessTokenClaims): Promise<string>
-  verify(token: string): Promise<AccessTokenClaims | null>
+  verify(token: string): Promise<VerifiedAccessToken | null>
 }
 
 export function createTokenService(env: Env): TokenService {
@@ -62,7 +75,8 @@ export function createTokenService(env: Env): TokenService {
           issuer: ISSUER,
           audience: AUDIENCE,
         })
-        return typeof payload.sub === "string" ? { userId: payload.sub } : null
+        if (typeof payload.sub !== "string" || typeof payload.iat !== "number") return null
+        return { userId: payload.sub, issuedAt: payload.iat }
       } catch {
         return null
       }
