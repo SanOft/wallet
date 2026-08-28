@@ -98,6 +98,24 @@ const envSchema = z.object({
   /** Cookie domain for the refresh token (§20.2). Omitted in development. */
   REFRESH_COOKIE_DOMAIN: z.string().optional(),
 
+  /**
+   * The shared secret a real USSD gateway presents on `/api/channels/ussd`
+   * (§20.2, FR-9.1).
+   *
+   * Optional, and unset is the expected state: the MVP has no shortcode, only
+   * the simulator (FR-9.6), which authenticates with the user's own session
+   * instead. What matters is the direction of the default — an unset secret
+   * makes the gateway route refuse every caller, because "not configured yet"
+   * and "open to the internet" must not be the same deployment.
+   *
+   * Length-checked like `JWT_SECRET` for the same reason: it is a bearer
+   * credential, and a short one is guessable rather than merely weak.
+   */
+  USSD_GATEWAY_SECRET: z
+    .string()
+    .min(32, { error: "USSD_GATEWAY_SECRET must be at least 32 characters" })
+    .optional(),
+
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
 })
 
