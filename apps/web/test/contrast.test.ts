@@ -87,6 +87,7 @@ const PAIRS = [
   { fg: "--color-danger", bg: "--color-background", light: 6.57, dark: 6.77 },
   { fg: "--color-warning", bg: "--color-background", light: 5.43, dark: 10.25 },
   { fg: "--color-text", bg: "--color-surface-sunken", light: 16.98, dark: 15.59 },
+  { fg: "--color-danger", bg: "--color-surface-sunken", light: 6.29, dark: 6.18 },
 ] as const
 
 /** NFR-4, and §13.2.2's own stated requirement. */

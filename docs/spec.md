@@ -822,7 +822,7 @@ Contrast for every pair was computed with the WCAG 2.1 relative luminance formul
 | `color-primary`        | `#175CD3` | `#84ADFF` | CTAs, links, active tab        | as text **5.99 / 8.44** ✓ |
 | `color-on-primary`     | `#FFFFFF` | `#0C111D` | Text on a primary background   | **5.99** ✓                |
 | `color-success`        | `#067647` | `#47CD89` | COMPLETED, incoming (+)        | **5.69 / 9.31** ✓         |
-| `color-danger`         | `#B42318` | `#F97066` | FAILED, outgoing (−), errors   | **6.57 / 6.77** ✓         |
+| `color-danger`         | `#B42318` | `#F97066` | FAILED, outgoing (−), errors   | **6.57 / 6.77** ✓; on `surface-sunken` **6.29 / 6.18** ✓ |
 | `color-warning`        | `#B54708` | `#FDB022` | PENDING, stale-data banner     | **5.43 / 10.25** ✓        |
 | `color-neutral`        | `#667085` | `#85888E` | QUEUED, disabled elements      | —                         |
 
