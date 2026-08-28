@@ -12,12 +12,14 @@ import {
   maskRecipientName,
   NEW_RECIPIENT_LIMIT,
   NEW_RECIPIENT_WINDOW_HOURS,
+  STEP_UP_THRESHOLD,
   TRANSFER_LIMITS,
   type TransferChannel,
   type TransferDirection,
   VELOCITY_MAX_TRANSFERS,
   VELOCITY_WINDOW_MINUTES,
 } from "@wallet/shared"
+import { attemptSubject, verifySecret } from "../infra/crypto.js"
 import { LedgerRepository } from "../infra/LedgerRepository.js"
 import {
   DomainError,
@@ -49,6 +51,15 @@ export interface TransferInput {
   readonly idempotencyKey: string
   readonly channel: TransferChannel
   readonly type?: "P2P" | "TOPUP"
+  /**
+   * FR-2.8's confirmation, required above `STEP_UP_THRESHOLD`.
+   *
+   * Optional on the way in and mandatory in the check below, which is the
+   * right way round: whether this transfer needs one depends on its amount,
+   * and putting the condition in the type would force every caller — the USSD
+   * adapter included — to reason about a rule that belongs to one channel.
+   */
+  readonly password?: string
 }
 
 export interface TransferResult {
@@ -178,17 +189,34 @@ export type TransferWarning = (event: string, cause: unknown) => void
 
 export interface TransferServiceDependencies {
   readonly prisma: PrismaClient
+  /**
+   * The same HMAC key `AuthService` uses for attempt subjects.
+   *
+   * Needed because a failed step-up is counted against the login backoff: it
+   * is the same credential, so it should share the same counter rather than
+   * open a second, unlimited door to guessing it. The coupling is one field
+   * and the alternative was a duplicate counter that the two services would
+   * eventually disagree about.
+   */
+  readonly pepper: string
   readonly warn?: TransferWarning
   readonly now?: () => Date
 }
 
 export class TransferService {
   readonly #prisma: PrismaClient
+  readonly #pepper: string
   readonly #warn: TransferWarning
   readonly #now: () => Date
 
-  constructor({ prisma, warn = () => {}, now = () => new Date() }: TransferServiceDependencies) {
+  constructor({
+    prisma,
+    pepper,
+    warn = () => {},
+    now = () => new Date(),
+  }: TransferServiceDependencies) {
     this.#prisma = prisma
+    this.#pepper = pepper
     this.#warn = warn
     this.#now = now
   }
@@ -196,8 +224,26 @@ export class TransferService {
   async execute(input: TransferInput): Promise<TransferResult> {
     const requestHash = hashTransferRequest(input)
 
+    /*
+     * The replay lookup runs *first*, and the step-up check after it.
+     *
+     * The reverse was written first, on the theory that a refusal must not be
+     * exchangeable for a success by resending the key. Mutation testing showed
+     * that reasoning was empty — a step-up refusal never writes an idempotency
+     * record, so there is nothing to replay — and it also showed the ordering
+     * cost something real: a client retrying a transfer that *did* complete,
+     * after a timeout it could not interpret, would be told to supply the
+     * password again for money that has already moved.
+     *
+     * That client is the offline outbox (FR-8.3), and it cannot supply one: a
+     * queued transfer must never carry a password into IndexedDB. Replay-first
+     * lets the retry return the answer the first attempt earned, which is what
+     * FR-4.4 promises.
+     */
     const replay = await this.#replay(input, requestHash)
     if (replay) return this.#settle(replay)
+
+    await this.#assertStepUp(input)
 
     let lastConflict: unknown
     for (let attempt = 1; attempt <= SERIALIZABLE_RETRIES; attempt++) {
@@ -383,6 +429,59 @@ export class TransferService {
       }),
       nextCursor: found.length > input.limit && last ? encodeCursor(last.createdAt, last.id) : null,
     }
+  }
+
+  /**
+   * FR-2.8: above a million so'm, the password again.
+   *
+   * Checked after the replay lookup — see `execute` for why that ordering is
+   * the safe one rather than the obvious one.
+   *
+   * Only for transfers the user initiates on this channel. A top-up moves the
+   * treasury's money to them, and asking someone to confirm a gift is
+   * ceremony; the USSD channel has its own gate (FR-9.5) and its own much
+   * lower cap.
+   */
+  async #assertStepUp(input: TransferInput): Promise<void> {
+    if (input.type === "TOPUP") return
+    if (input.channel !== "WEB") return
+    if (input.amount <= STEP_UP_THRESHOLD) return
+
+    if (!input.password) {
+      throw new DomainError("STEP_UP_REQUIRED", "This amount requires the account password")
+    }
+
+    const user = await this.#prisma.user.findUnique({
+      where: { id: input.senderUserId },
+      select: { passwordHash: true },
+    })
+    if (!user) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
+
+    if (!(await verifySecret(user.passwordHash, input.password))) {
+      /*
+       * Recorded as a failed attempt against the same subject the login
+       * backoff counts, so a session holder cannot use transfers as an
+       * unlimited password oracle. The cost is that a mistyped confirmation
+       * slows the next sign-in — which is the correct trade when the
+       * alternative is an offline-speed guess against a live account.
+       */
+      await this.#prisma.authAttempt.create({
+        data: {
+          userId: input.senderUserId,
+          subject: attemptSubject(await this.#phoneOf(input.senderUserId), this.#pepper),
+          succeeded: false,
+        },
+      })
+      throw new DomainError("STEP_UP_FAILED", "The password did not match")
+    }
+  }
+
+  async #phoneOf(userId: string): Promise<string> {
+    const user = await this.#prisma.user.findUnique({
+      where: { id: userId },
+      select: { phone: true },
+    })
+    return user?.phone ?? ""
   }
 
   /** Turns a stored outcome back into a return value or the original refusal. */

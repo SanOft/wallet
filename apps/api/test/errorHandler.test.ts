@@ -63,6 +63,8 @@ describe("error envelope (spec §12.3)", () => {
     ["INSUFFICIENT_FUNDS", 422],
     ["LIMIT_EXCEEDED", 422],
     ["IDEMPOTENCY_CONFLICT", 409],
+    ["STEP_UP_REQUIRED", 422],
+    ["STEP_UP_FAILED", 422],
     ["PIN_NOT_SET", 422],
     ["PIN_LOCKED", 429],
     ["RATES_UNAVAILABLE", 503],

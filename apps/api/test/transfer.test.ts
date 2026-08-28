@@ -478,7 +478,7 @@ describe.skipIf(!hasDatabase)("anti-fraud limits (FR-6)", () => {
       .send({ phone: recipientPhone, firstName: "C", lastName: "D", password: PASSWORD })
 
     const sender = await prisma.user.findUniqueOrThrow({ where: { phone: senderPhone } })
-    const transfers = new TransferService({ prisma })
+    const transfers = new TransferService({ prisma, pepper: "test-pepper" })
 
     // 600 000 UZS: fine on the web, above the USSD per-operation cap.
     await expect(
@@ -596,7 +596,7 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
     // exactly the cap went straight through.
     const sender = await holder(300_000_000n)
     const stranger = await holder(0n)
-    const transfers = new TransferService({ prisma })
+    const transfers = new TransferService({ prisma, pepper: "test-pepper" })
 
     // 400 000 UZS: under the cap, accepted.
     await transfers.execute({
@@ -624,7 +624,7 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
 
   it("FR-6.3: more than five transfers in five minutes blocks", async () => {
     const sender = await holder(10_000_000n)
-    const transfers = new TransferService({ prisma })
+    const transfers = new TransferService({ prisma, pepper: "test-pepper" })
     const recipients = []
     for (let i = 0; i < 6; i++) recipients.push(await holder(0n))
 
@@ -648,10 +648,18 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
     expect(outcomes[5]).toBe("limit.velocity")
   })
 
+  /**
+   * FR-2.8 applies to every WEB transfer above a million so'm, which most of
+   * the limit tests below exceed on purpose. The password is the one these
+   * holders were registered with; passing it keeps these tests about the
+   * limits they are named for rather than about the step-up.
+   */
+  const stepUp = { password: PASSWORD }
+
   it("FR-6.1: the daily total is capped per channel", async () => {
     const sender = await holder(3_500_000_000n)
     const recipient = await holder(0n)
-    const transfers = new TransferService({ prisma })
+    const transfers = new TransferService({ prisma, pepper: "test-pepper" })
 
     // An established relationship, so FR-6.2 does not fire before FR-6.1: one
     // small transfer, back-dated past the 24-hour new-recipient window.
@@ -677,6 +685,7 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
         amount: 1_000_000_000n,
         idempotencyKey: randomUUID(),
         channel: "WEB",
+        ...stepUp,
       })
       // Only the ones just made: back-dating everything would drag the
       // relationship-establishing transfer back inside the 24-hour window and
@@ -713,7 +722,7 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
     // deserves a client error.
     const sender = await holder(10_000_000n)
     const recipient = await holder(0n)
-    const transfers = new TransferService({ prisma })
+    const transfers = new TransferService({ prisma, pepper: "test-pepper" })
     const key = randomUUID()
 
     await transfers.execute({

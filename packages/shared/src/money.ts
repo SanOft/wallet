@@ -71,6 +71,16 @@ export const CHANNEL_LIMITS = {
 
 export type TransferChannel = keyof typeof CHANNEL_LIMITS
 
+/**
+ * FR-2.8: above this, a single transfer asks for the password again.
+ *
+ * The client needs the number to know when to show the field, and the server
+ * needs it to know when to demand one — and a client that guessed low would
+ * ask for a password the server does not want, while one that guessed high
+ * would submit a transfer it cannot complete and lose what the user typed.
+ */
+export const STEP_UP_THRESHOLD = 100_000_000n
+
 /** FR-6.2: 500 000 UZS to a recipient first seen less than 24 hours ago. */
 export const NEW_RECIPIENT_LIMIT = 50_000_000n
 

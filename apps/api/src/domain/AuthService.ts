@@ -7,11 +7,13 @@ import {
   generateRefreshToken,
   hashRefreshToken,
   hashSecret,
+  pinSubject,
   verifySecret,
 } from "../infra/crypto.js"
 import type { TokenService } from "../infra/jwt.js"
 import {
   AccountLockedError,
+  DomainError,
   InvalidCredentialsError,
   RefreshTokenInvalidError,
   RefreshTokenReusedError,
@@ -57,6 +59,8 @@ interface UserRow {
   readonly phone: string
   readonly firstName: string
   readonly lastName: string
+  /** Present so the row can answer "is a PIN set"; never leaves this module. */
+  readonly pinHash: string | null
 }
 
 /** Prisma signals a unique-constraint violation with P2002. */
@@ -72,8 +76,19 @@ function toPublicUser(user: UserRow): PublicUser {
     phone: user.phone,
     firstName: user.firstName,
     lastName: user.lastName,
+    /*
+     * The boolean, never the hash. `respond()` parses through
+     * `publicUserSchema`, which would strip an extra field — but the strip is
+     * the second line of defence and this is the first: a projection that
+     * carries a credential is one refactor away from publishing it.
+     */
+    pinSet: user.pinHash !== null,
   }
 }
+
+/** FR-9.5: three wrong PINs, then an hour with USSD transfers closed. */
+const PIN_ATTEMPTS_BEFORE_LOCK = 3
+const PIN_LOCK_MS = 60 * 60 * 1000
 
 /** FR-2.3: three failures are free; the fourth waits 1s, the fifth 2s. */
 const BACKOFF_FREE_ATTEMPTS = 3
@@ -160,7 +175,7 @@ export class AuthService {
             lastName: input.lastName,
             passwordHash,
           },
-          select: { id: true, phone: true, firstName: true, lastName: true },
+          select: { id: true, phone: true, firstName: true, lastName: true, pinHash: true },
         })
 
         // FR-1.4: one UZS account, balance 0. Inside the transaction, so a user
@@ -212,7 +227,14 @@ export class AuthService {
 
     const user = await this.#prisma.user.findUnique({
       where: { phone: input.phone },
-      select: { id: true, phone: true, firstName: true, lastName: true, passwordHash: true },
+      select: {
+        id: true,
+        phone: true,
+        firstName: true,
+        lastName: true,
+        passwordHash: true,
+        pinHash: true,
+      },
     })
 
     const hash = user?.passwordHash ?? (await dummyHash())
@@ -264,7 +286,9 @@ export class AuthService {
         select: {
           id: true,
           familyId: true,
-          user: { select: { id: true, phone: true, firstName: true, lastName: true } },
+          user: {
+            select: { id: true, phone: true, firstName: true, lastName: true, pinHash: true },
+          },
         },
       })
 
@@ -318,10 +342,118 @@ export class AuthService {
     if (stored) await this.#revokeFamily(stored.familyId, this.#now())
   }
 
+  /**
+   * FR-1.6: sets or replaces the USSD PIN, and only with the password.
+   *
+   * An access token proves someone is holding a live session. It does not
+   * prove they are the account holder — a phone left unlocked on a table is a
+   * live session — and the PIN gates a *second* channel that the token cannot
+   * reach. Asking for the password is what stops a borrowed session from
+   * granting USSD access the borrower never had.
+   *
+   * Changing it clears the lock. Somebody who can prove the password has
+   * demonstrated more than three correct PIN digits would have, and leaving
+   * them locked out of a PIN they have just chosen is punishing the recovery.
+   */
+  async setPin(userId: string, currentPassword: string, pin: string): Promise<void> {
+    const user = await this.#prisma.user.findUnique({
+      where: { id: userId },
+      select: { passwordHash: true },
+    })
+
+    // A token for a user who no longer exists is a credential that should stop
+    // working, not a 404.
+    if (!user) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
+
+    if (!(await verifySecret(user.passwordHash, currentPassword))) {
+      /*
+       * `STEP_UP_FAILED`, not `AUTH_INVALID_CREDENTIALS`. The session is fine;
+       * the confirmation was wrong. A 401 here would send the client off to
+       * refresh a token that never expired and retry a request that would fail
+       * again the same way.
+       */
+      throw new DomainError("STEP_UP_FAILED", "Password confirmation failed")
+    }
+
+    await this.#prisma.user.update({
+      where: { id: userId },
+      data: { pinHash: await hashSecret(pin), pinLockedUntil: null },
+    })
+  }
+
+  /**
+   * FR-9.5: three wrong PINs block USSD transfers for an hour.
+   *
+   * The block is stored rather than counted, because the counting would have
+   * to survive a process restart and USSD sessions are stateless by nature —
+   * every request arrives cold. `pinLockedUntil` is a single column that
+   * answers "may this person transfer?" without reading a history.
+   *
+   * Consumed by the USSD adapter (B6). Written here because it is the same
+   * credential the web sets, and two implementations of one rule is how the
+   * two channels come to disagree about who is blocked.
+   */
+  async verifyPin(userId: string, pin: string): Promise<void> {
+    const user = await this.#prisma.user.findUnique({
+      where: { id: userId },
+      select: { pinHash: true, pinLockedUntil: true },
+    })
+
+    if (!user) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
+    if (!user.pinHash) throw new DomainError("PIN_NOT_SET", "No PIN has been set")
+
+    const now = this.#now()
+    if (user.pinLockedUntil && user.pinLockedUntil > now) {
+      throw new DomainError("PIN_LOCKED", "PIN is locked")
+    }
+
+    if (await verifySecret(user.pinHash, pin)) {
+      // A correct PIN clears the count, so three wrong attempts spread over a
+      // month never add up to a block.
+      await this.#prisma.authAttempt.create({
+        data: { userId, subject: pinSubject(userId, this.#pepper), succeeded: true },
+      })
+      return
+    }
+
+    await this.#prisma.authAttempt.create({
+      data: { userId, subject: pinSubject(userId, this.#pepper), succeeded: false },
+    })
+
+    const failures = await this.#consecutivePinFailures(userId)
+    if (failures >= PIN_ATTEMPTS_BEFORE_LOCK) {
+      await this.#prisma.user.update({
+        where: { id: userId },
+        data: { pinLockedUntil: new Date(now.getTime() + PIN_LOCK_MS) },
+      })
+      throw new DomainError("PIN_LOCKED", "PIN is locked")
+    }
+
+    throw new DomainError("AUTH_INVALID_CREDENTIALS", "PIN is not correct")
+  }
+
+  async #consecutivePinFailures(userId: string): Promise<number> {
+    const subject = pinSubject(userId, this.#pepper)
+
+    const lastSuccess = await this.#prisma.authAttempt.findFirst({
+      where: { subject, succeeded: true },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    })
+
+    return this.#prisma.authAttempt.count({
+      where: {
+        subject,
+        succeeded: false,
+        ...(lastSuccess ? { createdAt: { gt: lastSuccess.createdAt } } : {}),
+      },
+    })
+  }
+
   async currentUser(userId: string): Promise<PublicUser | null> {
     const user = await this.#prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, phone: true, firstName: true, lastName: true },
+      select: { id: true, phone: true, firstName: true, lastName: true, pinHash: true },
     })
     return user ? toPublicUser(user) : null
   }

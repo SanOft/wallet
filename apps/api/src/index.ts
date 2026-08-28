@@ -43,6 +43,7 @@ async function main(): Promise<void> {
 
   const transfers = new TransferService({
     prisma,
+    pepper: env.JWT_SECRET,
     warn: (event, cause) => log.warn({ event, err: cause }, "transfer degraded"),
   })
   const rates = new RatesService({

@@ -123,7 +123,7 @@ Every requirement is numbered and verifiable. Acceptance criteria are written in
 - **FR-2.6** **Rotation:** on every refresh, the old token is invalidated and a new one is issued.
 - **FR-2.7** **Reuse detection:** if a previously used refresh token comes back — the entire token family is revoked and all devices are signed out.
   - **Bound on the window.** Revocation reaches refresh tokens immediately; already-issued *access* tokens are self-contained and keep working until they expire, so a compromised session survives for up to the FR-2.4 lifetime (15 minutes) after detection. This is the price of having no revocation list, and it is stated here rather than left in a source comment. Endpoints that move money get a `tokensValidAfter` check at B3, which closes the window for exactly the operations where fifteen minutes matters.
-- **FR-2.8** **Step-up:** any single transfer above 1,000,000 UZS requires re-entering the password on the confirmation screen.
+- **FR-2.8** **Step-up:** any single transfer above 1,000,000 UZS requires re-entering the password on the confirmation screen. Enforced in `TransferService`, **after** the idempotency replay lookup rather than before it: a refusal writes no record, so ordering it first protects nothing — while it would force the offline outbox (FR-8.3) to re-confirm money that has already moved, which it cannot do, because a queued transfer must never carry a password into IndexedDB. A failed confirmation is counted against the same backoff as a failed login, so a held session cannot be used as an unlimited password oracle.
 
 ## FR-3. Account and balance
 
@@ -771,6 +771,8 @@ Field codes appear inside `VALIDATION_ERROR` (which field failed) and inside `LI
 | `INSUFFICIENT_FUNDS`       | 422  | Balance too low                              | "Insufficient funds."                                                                                          |
 | `LIMIT_EXCEEDED`           | 422  | FR-6 limits (which limit — in `details`, via the `limit.*` field codes) | "Limit exceeded: ..."                                                                                          |
 | `IDEMPOTENCY_CONFLICT`     | 409  | Same key + different payload                 | (technical error — with a support ID)                                                                          |
+| `STEP_UP_REQUIRED`         | 422  | A transfer above 1 000 000 UZS arrived without the password (FR-2.8) | "Confirm with your password." |
+| `STEP_UP_FAILED`           | 422  | That confirmation was wrong — deliberately **not** 401, which would send the client to refresh a healthy session and retry | "The password did not match." |
 | `PIN_NOT_SET`              | 422  | USSD transfer without a PIN                  | "Set your PIN in the app first."                                                                               |
 | `PIN_LOCKED`               | 429  | 3 wrong PIN attempts                         | "PIN is blocked. Try again in 1 hour."                                                                         |
 | `RATES_UNAVAILABLE`        | 503  | The central bank is unreachable and this process holds no cached rate (FR-7.2) | "Kurslar hozircha mavjud emas." — the wallet is fully usable without them |

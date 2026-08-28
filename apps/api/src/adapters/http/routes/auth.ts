@@ -1,8 +1,10 @@
+import type { PrismaClient } from "@prisma/client"
 import {
   authResponseSchema,
   loginRequestSchema,
   publicUserSchema,
   registerRequestSchema,
+  setPinRequestSchema,
 } from "@wallet/shared"
 import { Router } from "express"
 import type { Env } from "../../../config/env.js"
@@ -11,9 +13,12 @@ import { DomainError, RefreshTokenInvalidError } from "../../../domain/errors.js
 import type { TokenService } from "../../../infra/jwt.js"
 import { clearRefreshCookie, REFRESH_COOKIE, readCookie, setRefreshCookie } from "../cookies.js"
 import { requireAuth } from "../middleware/requireAuth.js"
+import { requireCurrentSession } from "../middleware/requireCurrentSession.js"
 import { respond } from "../respond.js"
 
 export interface AuthRouterDependencies {
+  /** Only for `requireCurrentSession`, which reads `tokensValidAfter` (P-16). */
+  readonly prisma: PrismaClient
   readonly auth: AuthService
   readonly tokens: TokenService
   readonly env: Env
@@ -33,7 +38,7 @@ export interface AuthRouterDependencies {
  * one becomes its documented §12.3 envelope without this file naming a single
  * status code.
  */
-export function authRouter({ auth, tokens, env }: AuthRouterDependencies): Router {
+export function authRouter({ auth, tokens, env, prisma }: AuthRouterDependencies): Router {
   const router = Router()
 
   router.post("/api/auth/register", async (req, res) => {
@@ -77,6 +82,30 @@ export function authRouter({ auth, tokens, env }: AuthRouterDependencies): Route
     clearRefreshCookie(res, env)
     res.status(204).end()
   })
+
+  /**
+   * `PUT /api/me/pin` (FR-1.6, §12.1).
+   *
+   * Behind `requireCurrentSession`: a PIN grants access to a channel that
+   * moves money, so setting one is exactly the kind of change P-16 scoped that
+   * check to. A token minted before a revocation must not be able to open a
+   * second door with it.
+   */
+  router.put(
+    "/api/me/pin",
+    requireAuth(tokens),
+    requireCurrentSession(prisma),
+    async (req, res) => {
+      if (!req.userId) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
+
+      const input = setPinRequestSchema.parse(req.body)
+      await auth.setPin(req.userId, input.currentPassword, input.pin)
+
+      // 204: there is nothing to return, and returning the user would tempt a
+      // client into treating this as a place to read state from.
+      res.status(204).end()
+    },
+  )
 
   router.get("/api/me", requireAuth(tokens), async (req, res) => {
     const user = req.userId ? await auth.currentUser(req.userId) : null

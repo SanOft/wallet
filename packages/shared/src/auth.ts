@@ -76,6 +76,15 @@ export const publicUserSchema = z.object({
   phone: z.string(),
   firstName: z.string(),
   lastName: z.string(),
+  /**
+   * Whether a USSD PIN exists (FR-1.6) — never the PIN, never its hash.
+   *
+   * A property of the user rather than its own endpoint, because the Profile
+   * screen already holds the user and a second round trip for one boolean is a
+   * round trip on the connection NFR-3 is written for. It discloses nothing:
+   * the only person who can read it is the account holder, and they know.
+   */
+  pinSet: z.boolean(),
 })
 export type PublicUser = z.infer<typeof publicUserSchema>
 
@@ -86,3 +95,42 @@ export const authResponseSchema = z.object({
   user: publicUserSchema,
 })
 export type AuthResponse = z.infer<typeof authResponseSchema>
+
+/**
+ * FR-9.5's four digits, and why they are only four.
+ *
+ * A PIN is not a password and is not asked to be: it guards the USSD channel,
+ * where the keypad is a phone dialer and anything longer is unusable. Its
+ * weakness is answered by the channel's own limits rather than by length —
+ * three wrong attempts block transfers for an hour (FR-9.5), and USSD carries
+ * a fraction of the web's per-operation cap (FR-6.1, NFR-1.11).
+ *
+ * Stored with the same Argon2id parameters as a password (NFR-1.1). Four
+ * digits is ten thousand values; anything cheaper to verify would make the
+ * hash the weak part rather than the PIN.
+ */
+export const pinSchema = z
+  .string()
+  .regex(/^\d{4}$/, { error: "pin.invalid_format" })
+  .describe("Four digits")
+
+/**
+ * `PUT /api/me/pin` (FR-1.6, §12.1).
+ *
+ * The current password is required, and that is the whole security of this
+ * endpoint: an access token is enough to *use* the wallet, and setting the PIN
+ * that guards a second channel is a change only the account holder should be
+ * able to make. A stolen token then buys the thief the web session they
+ * already had, not a USSD one they did not.
+ */
+export const setPinRequestSchema = z.strictObject({
+  currentPassword: z.string().min(1, { error: "field.required" }),
+  pin: pinSchema,
+})
+export type SetPinRequest = z.infer<typeof setPinRequestSchema>
+
+export const pinStatusResponseSchema = z.object({
+  /** Whether a PIN exists — never the PIN, and never its hash. */
+  isSet: z.boolean(),
+})
+export type PinStatusResponse = z.infer<typeof pinStatusResponseSchema>
