@@ -143,3 +143,73 @@ function firstCodePointUpper(value: string): string {
   const [upper] = [...first.toUpperCase()]
   return upper ?? ""
 }
+
+/**
+ * `GET /api/transfers` — FR-5.
+ *
+ * The direction is its own word, and deliberately not `type`.
+ *
+ * §12.1 wrote the filter as `type=` while FR-5.2 defines it as
+ * "incoming/outgoing", and the response already carries `type: P2P | TOPUP`.
+ * One name for two concepts across the client/server boundary is the drift
+ * that is cheap to prevent here and expensive to unpick once a client depends
+ * on it, so the query parameter is `direction` and §12.1 was corrected.
+ */
+export const transferDirectionSchema = z.enum(["incoming", "outgoing"])
+export type TransferDirection = z.infer<typeof transferDirectionSchema>
+
+/** FR-5.1: 20 per page. Smaller pages exist for the home screen's last five. */
+export const HISTORY_PAGE_MAX = 20
+
+export const historyQuerySchema = z.object({
+  /**
+   * Opaque by contract, `createdAt|id` by construction. Clients must treat it
+   * as a token: encoding meaning a client can parse invites one to build its
+   * own, and then the server cannot change how pages are cut.
+   */
+  cursor: z.string().min(1).optional(),
+  /** Inclusive lower bound on `createdAt`. */
+  from: z.iso.datetime().optional(),
+  /** Inclusive upper bound on `createdAt`. */
+  to: z.iso.datetime().optional(),
+  direction: transferDirectionSchema.optional(),
+  status: transferStatusSchema.optional(),
+  /*
+   * Not in §12.1 originally. The home screen shows five rows (§13.3), and
+   * fetching twenty to render five is twenty rows of bandwidth on the
+   * connection NFR-3 exists for. Bounded so a client cannot ask for the table.
+   */
+  limit: z.coerce.number().int().min(1).max(HISTORY_PAGE_MAX).default(HISTORY_PAGE_MAX),
+})
+export type HistoryQuery = z.infer<typeof historyQuerySchema>
+
+/**
+ * One row of FR-5.3: date-time, counterparty, amount, status, and the id
+ * support will ask for.
+ *
+ * `amount` is unsigned and `direction` carries the sign. The ledger already
+ * works this way (§9.5) and a signed amount on the wire would let a client
+ * render a negative incoming payment from a single flipped comparison.
+ *
+ * The counterparty is masked exactly as `FR-4.9`'s lookup masks it, and is
+ * `null` for a top-up, where the other side is the treasury and naming it
+ * would be describing plumbing to the user.
+ */
+export const historyItemSchema = z.object({
+  id: z.string(),
+  createdAt: z.iso.datetime(),
+  status: transferStatusSchema,
+  type: transferTypeSchema,
+  channel: transferChannelSchema,
+  direction: transferDirectionSchema,
+  amount: z.string(),
+  counterparty: z.object({ maskedName: z.string() }).nullable(),
+})
+export type HistoryItem = z.infer<typeof historyItemSchema>
+
+export const historyResponseSchema = z.object({
+  items: z.array(historyItemSchema),
+  /** `null` on the last page (§12.2). */
+  nextCursor: z.string().nullable(),
+})
+export type HistoryResponse = z.infer<typeof historyResponseSchema>
