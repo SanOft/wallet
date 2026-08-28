@@ -1,0 +1,8 @@
+# Nothing here is for a search engine.
+#
+# Every route behind `/` is either an authenticated screen or a sign-in form,
+# so indexing them offers no one anything and puts the shape of the
+# application — its routes, its wording, its error pages — into a public index
+# that outlives any change to them.
+User-agent: *
+Disallow: /

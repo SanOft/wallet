@@ -83,6 +83,33 @@ Lint runs first because it is the cheapest. Build comes next, not last: `apps/*`
 - **Never** commit on a red `verify`.
 - After a fix, re-run the **whole** `verify`, not just the stage that failed. A fix can break something upstream.
 
+### Checking the PWA (F6)
+
+Lighthouse removed its PWA category in v12, so there is no score to point at.
+What replaces it, against a production build served by `vite preview`:
+
+```bash
+yarn workspace @wallet/web build
+yarn workspace @wallet/web preview --port 4174
+```
+
+1. The manifest parses, names the app, is `display: standalone`, and carries a
+   `maskable` icon — a maskable icon must be full-bleed, because the platform
+   crops it and transparent margins come back as holes.
+2. `navigator.serviceWorker.controller` is non-null **after a reload**. It is
+   null on the first load by design: the worker activates and takes over on the
+   next navigation.
+3. With the network switched off in DevTools, a reload still renders the shell.
+
+Measured on 2026-08-28 at Lighthouse 13.4.1, mobile: accessibility **100**,
+best practices **100**. SEO is **63** on purpose — the only failing audit is
+"page is blocked from indexing", which `robots.txt` does deliberately.
+
+One caveat worth knowing before it wastes an afternoon: DevTools network
+throttling does **not** flip `navigator.onLine`, so the offline banner will not
+appear under it. The banner is driven by the `offline` event and is covered by
+`home.test.tsx`.
+
 ### The tests need their own database (P-31)
 
 The integration suites write, and they clean nothing up. Sharing one database

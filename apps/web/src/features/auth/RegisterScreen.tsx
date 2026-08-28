@@ -168,7 +168,7 @@ export function RegisterScreen() {
 
       <p className="m-0 text-step--1 text-(--color-text-secondary)">
         Hisobingiz bormi?{" "}
-        <Link to="/login" className="text-(--color-primary)">
+        <Link to="/login" className="text-(--color-primary) underline">
           Kirish
         </Link>
       </p>

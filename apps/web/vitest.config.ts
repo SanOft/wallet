@@ -1,6 +1,23 @@
+import { fileURLToPath } from "node:url"
 import { defineConfig } from "vitest/config"
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      /*
+       * `vite-plugin-pwa` provides this module, and this config does not load
+       * that plugin — the tests would otherwise fail on an unresolved import
+       * for a module that exists only in a real build.
+       *
+       * The cost is that the stub's shape is not checked against the real
+       * one; `src/vite-env.d.ts` references the plugin's types so the
+       * *component* still is, which is where a mismatch would actually bite.
+       */
+      "virtual:pwa-register/react": fileURLToPath(
+        new URL("./test/stubs/pwa-register.ts", import.meta.url),
+      ),
+    },
+  },
   test: {
     environment: "jsdom",
     setupFiles: ["./test/setup.ts"],

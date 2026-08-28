@@ -14,6 +14,7 @@ import { Profile } from "../screens/Profile.js"
 import { useAppSelector } from "./hooks.js"
 import { makeStore } from "./store.js"
 import { TabBar } from "./TabBar.js"
+import { UpdatePrompt } from "./UpdatePrompt.js"
 
 /**
  * The gap `status: "unknown"` exists for.
@@ -147,6 +148,13 @@ function Shell() {
       {/* Hidden while signed out: three tabs that all bounce to the login
           screen are three ways to be told no. */}
       {status === "authenticated" ? <TabBar /> : null}
+
+      {/*
+        Outside the session gate: a new build matters whether or not anyone is
+        signed in, and the login screen is exactly where a stale bundle is
+        least obvious.
+      */}
+      <UpdatePrompt />
     </>
   )
 }
