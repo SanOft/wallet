@@ -3,6 +3,7 @@ import { ErrorBoundary } from "../components/ErrorBoundary.js"
 import { BalanceCard } from "../features/accounts/BalanceCard.js"
 import { TopUpButton } from "../features/accounts/TopUpButton.js"
 import { RecentTransactions } from "../features/history/RecentTransactions.js"
+import { QueuedList } from "../features/outbox/QueuedList.js"
 import { RatesWidget } from "../features/rates/RatesWidget.js"
 
 /**
@@ -47,6 +48,15 @@ export function Home() {
       */}
       <ErrorBoundary scope="topup" title="To'ldirish tugmasini ko'rsatib bo'lmadi.">
         <TopUpButton />
+      </ErrorBoundary>
+
+      {/*
+        Above the history, because a queued item is not a transaction: nothing
+        has moved and no ledger entry exists. Below the actions, because it is
+        a consequence of them.
+      */}
+      <ErrorBoundary scope="outbox" title="Navbatni ko'rsatib bo'lmadi.">
+        <QueuedList />
       </ErrorBoundary>
 
       <ErrorBoundary scope="history" title="Amaliyotlarni ko'rsatib bo'lmadi.">

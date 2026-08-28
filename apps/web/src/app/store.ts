@@ -1,6 +1,7 @@
 import { configureStore, createListenerMiddleware } from "@reduxjs/toolkit"
 import { authApi } from "../features/auth/api.js"
 import { authSlice, signedOut } from "../features/auth/authSlice.js"
+import { clearOutbox } from "../lib/outbox.js"
 import { clearReadCache } from "../lib/readCache.js"
 import { walletApi } from "./api.js"
 
@@ -47,7 +48,14 @@ function sessionCleanup() {
   listener.startListening({
     actionCreator: signedOut,
     effect: async () => {
+      /*
+       * Both stores. A queued item is one person's money instruction carrying
+       * their idempotency key: sending it after they signed out would use a
+       * session that is no longer theirs, and leaving it puts their pending
+       * transfer on the next person's screen.
+       */
       await clearReadCache()
+      await clearOutbox()
     },
   })
 
