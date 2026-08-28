@@ -180,8 +180,51 @@ describe("the balance, and when it was true (FR-3, FR-3.4)", () => {
 
     // Waiting for a timeout first would leave the screen claiming currency for
     // as long as the timeout lasts.
-    await waitFor(() => expect(balanceCard()).toHaveTextContent(/Aloqa yo'q/))
+    const banner = await screen.findByText(/Aloqa yo'q\./)
+    expect(banner).toBeInTheDocument()
+
+    // The condition is stated once, by the banner. The card carries the part
+    // that differs per figure — how old this number is — and the number
+    // itself stays, because removing it would be worse than dating it.
+    await waitFor(() => expect(balanceCard()).toHaveTextContent(/gi ma'lumot/))
     expect(balanceCard()).toHaveTextContent(/1 250 000/)
+    expect(within(balanceCard()).queryByText(/Aloqa yo'q/)).toBeNull()
+  })
+
+  it("names the server when the device thinks it is online", async () => {
+    await showHome()
+    await waitFor(() => expect(balanceCard()).toHaveTextContent(/1 250 000/))
+
+    script = (url) =>
+      url === "/api/accounts" ? "network-failure" : (OK[url] ?? { status: 200, body: {} })
+    act(() => {
+      window.dispatchEvent(new Event("online"))
+    })
+
+    // No banner for this one — the device believes it has a connection — so
+    // the card is the only place the user is told anything at all.
+    await waitFor(() => expect(balanceCard()).toHaveTextContent(/ulanib bo'lmadi/))
+    expect(screen.queryByText(/Aloqa yo'q\./)).toBeNull()
+  })
+
+  it("takes the banner down when the connection returns", async () => {
+    await showHome()
+    await waitFor(() => expect(balanceCard()).toHaveTextContent(/1 250 000/))
+
+    act(() => {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)
+      window.dispatchEvent(new Event("offline"))
+    })
+    await screen.findByText(/Aloqa yo'q\./)
+
+    act(() => {
+      vi.spyOn(navigator, "onLine", "get").mockReturnValue(true)
+      window.dispatchEvent(new Event("online"))
+    })
+
+    // A warning that outlives its condition is a warning people learn to
+    // dismiss without reading.
+    await waitFor(() => expect(screen.queryByText(/Aloqa yo'q\./)).toBeNull())
   })
 })
 
@@ -379,9 +422,10 @@ describe("what a screen reader is given", () => {
       window.dispatchEvent(new Event("offline"))
     })
 
-    const warning = await within(balanceCard()).findByText(/Aloqa yo'q/)
+    const warning = await screen.findByText(/Aloqa yo'q\./)
     // `status`, not `alert`: worth saying at the next pause, not worth cutting
-    // across the sentence someone is in the middle of hearing.
+    // across the sentence someone is in the middle of hearing — least of all
+    // when the person cannot easily find their place again.
     expect(warning.closest("[role='status']")).not.toBeNull()
     expect(warning.closest("[role='alert']")).toBeNull()
   })

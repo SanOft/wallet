@@ -73,6 +73,19 @@ export function FreshnessLine(props: {
 
   const { text, Icon } = REASON[freshness.reason]
 
+  /*
+   * Offline is stated once, by the banner at the top of the shell. Repeating
+   * it under every figure put the same sentence on screen three times — and
+   * three copies of a warning read as noise, which is how a warning stops
+   * being read. What stays here is the part that differs per figure: how old
+   * this particular number is.
+   *
+   * "Could not reach the server" is different: there is no banner for it,
+   * because the device believes it is online, so this is the only place the
+   * user is told at all.
+   */
+  const showReason = freshness.reason !== "offline"
+
   return (
     <p
       /*
@@ -87,7 +100,8 @@ export function FreshnessLine(props: {
       <Icon size={16} aria-hidden={true} className="shrink-0" />
       <span>
         <span className="sr-only">{label}: </span>
-        {text} — {age}gi ma&apos;lumot
+        {showReason ? `${text} — ` : ""}
+        {age}gi ma&apos;lumot
       </span>
     </p>
   )
