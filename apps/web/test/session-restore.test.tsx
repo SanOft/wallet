@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { resetRefreshState } from "../src/app/baseQuery.js"
 import { type AppStore, makeStore } from "../src/app/store.js"
 import { resetSessionRestore, useSessionRestore } from "../src/features/auth/useSessionRestore.js"
+import { clearSessionHint, giveSessionHint } from "./renderApp.js"
 
 /**
  * Boot, and the gap FR-2.4 creates.
@@ -41,6 +42,10 @@ beforeEach(() => {
   calls = []
   resetRefreshState()
   resetSessionRestore()
+  // These tests are about what happens *when the app asks*, so they all start
+  // with the hint that makes it ask. The two that are about not asking clear
+  // it themselves.
+  giveSessionHint()
   vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
     // Through `Request`, not `String(input)`: RTK Query passes a Request
     // object, and stringifying it yields "[object Request]" — which `new URL`
@@ -53,6 +58,39 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  clearSessionHint()
+})
+
+describe("not asking when the answer is already known", () => {
+  it("makes no request at all without the hint cookie", async () => {
+    clearSessionHint()
+    script = () => json(200, { accessToken: "restored", user: null })
+
+    const store = makeStore()
+    mount(store)
+
+    await waitFor(() => expect(store.getState().auth.status).toBe("anonymous"))
+
+    /*
+     * The whole point. The refresh cookie is `httpOnly`, so before this the
+     * only way to learn "nobody is signed in" was to ask and be refused —
+     * a guaranteed 401 on the first paint of the login screen, a wasted round
+     * trip on a bad connection, and a console error on every anonymous load.
+     */
+    expect(calls).toHaveLength(0)
+  })
+
+  it("still asks when the hint is there, even if the cookie turns out to be dead", async () => {
+    script = () => json(401, {})
+
+    const store = makeStore()
+    mount(store)
+
+    await waitFor(() => expect(store.getState().auth.status).toBe("anonymous"))
+    // The hint is a hint, not an answer: a stale one costs exactly one request
+    // and then behaves as it always did.
+    expect(calls.filter((url) => url === "/api/auth/refresh")).toHaveLength(1)
+  })
 })
 
 describe("restoring a session on boot", () => {

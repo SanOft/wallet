@@ -163,7 +163,9 @@ export function RegisterScreen() {
       {/* FR-6.5: permanent, on the screen where an account begins. */}
       <p className="m-0 flex items-start gap-2xs text-step--1 text-(--color-text-secondary)">
         <ShieldAlert size={16} aria-hidden={true} className="mt-3xs shrink-0" />
-        <span>Wallet xodimlari hech qachon PIN yoki SMS koddan so&apos;ramaydi.</span>
+        <span>
+          Wallet xodimlari hech qachon PIN yoki SMS kodni yuborishingizni so&apos;ramaydi.
+        </span>
       </p>
 
       <p className="m-0 text-step--1 text-(--color-text-secondary)">

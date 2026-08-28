@@ -4,15 +4,19 @@ import { authSlice } from "../features/auth/authSlice.js"
 import { walletApi } from "./api.js"
 
 /*
- * Imported for their side effect: `injectEndpoints` runs at module load, and a
- * store built without these has a `walletApi` slice with no endpoints in it.
- * The alternative — importing them from the components that use them — works
- * until a test renders one component and the reducer has never heard of the
- * others.
+ * The feature endpoint modules are deliberately *not* imported here.
+ *
+ * They were, for their `injectEndpoints` side effect, and that single line
+ * silently undid route-level code splitting: importing them from the store
+ * pulled the balance card, the history list and the rates widget into the
+ * entry chunk, so the login screen downloaded the whole application to render
+ * a password field. Lighthouse called it 52% unused JavaScript.
+ *
+ * RTK Query injects late by design. Each screen imports the endpoints it uses,
+ * so they arrive with the chunk that needs them and the reducer picks them up
+ * then — which is the behaviour the eager imports were guarding against
+ * without ever being needed.
  */
-import "../features/accounts/api.js"
-import "../features/history/api.js"
-import "../features/rates/api.js"
 
 /**
  * One store, assembled here so a test can build its own with the same shape.

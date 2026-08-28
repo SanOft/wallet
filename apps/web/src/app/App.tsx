@@ -1,16 +1,12 @@
 import { setupListeners } from "@reduxjs/toolkit/query"
-import { type ReactNode, useEffect, useState } from "react"
+import { lazy, type ReactNode, Suspense, useEffect, useState } from "react"
 import { Provider } from "react-redux"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router"
 import { ErrorBoundary } from "../components/ErrorBoundary.js"
 import { LoginScreen } from "../features/auth/LoginScreen.js"
 import { RegisterScreen } from "../features/auth/RegisterScreen.js"
 import { useSessionRestore } from "../features/auth/useSessionRestore.js"
-import { FormShowcase } from "../screens/FormShowcase.js"
-import { History } from "../screens/History.js"
-import { Home } from "../screens/Home.js"
 import { NotFound } from "../screens/NotFound.js"
-import { Profile } from "../screens/Profile.js"
 import { useAppSelector } from "./hooks.js"
 import { makeStore } from "./store.js"
 import { TabBar } from "./TabBar.js"
@@ -28,6 +24,47 @@ import { UpdatePrompt } from "./UpdatePrompt.js"
  * noisier than nothing; this reserves the space and says what it is doing to
  * anyone who cannot see it.
  */
+/**
+ * The signed-in screens, fetched when they are first needed.
+ *
+ * Measured, not guessed: Lighthouse reported 52% of a 127 KB bundle unused on
+ * the login screen, because rendering a password field was pulling in the
+ * balance card, the history list, the rates widget and every endpoint they
+ * use. That is the whole application downloaded to show a form, on the
+ * connection NFR-3 is written for.
+ *
+ * The login and registration screens stay eager. They are the first paint for
+ * anyone who is not signed in, and splitting the thing you are about to render
+ * only adds a round trip.
+ *
+ * Offline is unaffected: the service worker precaches every emitted chunk, so
+ * a split route is available offline from the second visit exactly as the
+ * shell is. The first visit is the one that pays, and it pays less than before.
+ */
+const Home = lazy(() => import("../screens/Home.js").then((m) => ({ default: m.Home })))
+const History = lazy(() => import("../screens/History.js").then((m) => ({ default: m.History })))
+const Profile = lazy(() => import("../screens/Profile.js").then((m) => ({ default: m.Profile })))
+const FormShowcase = lazy(() =>
+  import("../screens/FormShowcase.js").then((m) => ({ default: m.FormShowcase })),
+)
+
+/**
+ * What a route shows while its code is in flight.
+ *
+ * Deliberately near-empty, for the same reason `Deciding` is: a spinner that
+ * flashes for eighty milliseconds is noisier than nothing. The sr-only line is
+ * not optional though — without it a screen reader is told nothing at all
+ * while the page is blank, which is indistinguishable from the app having
+ * stopped.
+ */
+function LoadingRoute() {
+  return (
+    <p role="status" className="m-0">
+      <span className="sr-only">Yuklanmoqda</span>
+    </p>
+  )
+}
+
 function Deciding() {
   return (
     <p role="status" className="m-0 text-(--color-text-secondary)">
@@ -84,65 +121,72 @@ function Shell() {
               : "var(--spacing-xl)",
         }}
       >
-        <Routes>
-          <Route
-            path="/login"
-            element={
-              <RedirectIfSignedIn>
-                <LoginScreen />
-              </RedirectIfSignedIn>
-            }
-          />
-          <Route
-            path="/register"
-            element={
-              <RedirectIfSignedIn>
-                <RegisterScreen />
-              </RedirectIfSignedIn>
-            }
-          />
+        {/*
+          One boundary around the routes rather than one per lazy element: the
+          fallback is identical for all of them, and Suspense inside the router
+          keeps the tab bar and the banner mounted while a screen arrives.
+        */}
+        <Suspense fallback={<LoadingRoute />}>
+          <Routes>
+            <Route
+              path="/login"
+              element={
+                <RedirectIfSignedIn>
+                  <LoginScreen />
+                </RedirectIfSignedIn>
+              }
+            />
+            <Route
+              path="/register"
+              element={
+                <RedirectIfSignedIn>
+                  <RegisterScreen />
+                </RedirectIfSignedIn>
+              }
+            />
 
-          <Route
-            path="/"
-            element={
-              <RequireAuth>
-                <Home />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/history"
-            element={
-              <RequireAuth>
-                <History />
-              </RequireAuth>
-            }
-          />
-          {/*
+            <Route
+              path="/"
+              element={
+                <RequireAuth>
+                  <Home />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/history"
+              element={
+                <RequireAuth>
+                  <History />
+                </RequireAuth>
+              }
+            />
+            {/*
             F0's design-system showcase, kept reachable rather than deleted:
             its definition of done is a visual check at four widths and in both
             themes, and that check needs somewhere to live now that the real
             Home has taken the route it used to occupy.
           */}
-          <Route
-            path="/design"
-            element={
-              <RequireAuth>
-                <FormShowcase />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/profile"
-            element={
-              <RequireAuth>
-                <Profile />
-              </RequireAuth>
-            }
-          />
+            <Route
+              path="/design"
+              element={
+                <RequireAuth>
+                  <FormShowcase />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <RequireAuth>
+                  <Profile />
+                </RequireAuth>
+              }
+            />
 
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
       </main>
 
       {/* Hidden while signed out: three tabs that all bounce to the login

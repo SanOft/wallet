@@ -101,9 +101,31 @@ yarn workspace @wallet/web preview --port 4174
    next navigation.
 3. With the network switched off in DevTools, a reload still renders the shell.
 
-Measured on 2026-08-28 at Lighthouse 13.4.1, mobile: accessibility **100**,
-best practices **100**. SEO is **63** on purpose — the only failing audit is
-"page is blocked from indexing", which `robots.txt` does deliberately.
+### The four scores, and the floor under them
+
+All four Lighthouse categories are held at **98 or above**. Measured on
+2026-08-28 at Lighthouse 13.4.1 against a production build:
+
+| | desktop | mobile |
+|---|---|---|
+| Performance | 100 | **98** |
+| Accessibility | 100 | 100 |
+| Best practices | 100 | 100 |
+| SEO | 100 | 100 |
+
+```bash
+npx lighthouse http://localhost:4176/login   --only-categories=performance,accessibility,best-practices,seo   --chrome-flags="--headless=new" --output=json --output-path=lh.json
+```
+
+Mobile performance is **at the floor, with no headroom**: FCP 1.7s, LCP 2.0s,
+TBT 80ms under simulated throttling. That number is framework cost — React,
+Redux Toolkit, RTK Query, the router and Zod are all needed to render a login
+form, and they are ~120 KB gzipped between them. Route splitting moved the
+signed-in screens out of the critical path, which was right on its own terms
+but bought roughly 4 KB and did not move the score.
+
+Buying real headroom means taking RTK Query and Zod off the anonymous path,
+which is architecture, not tuning. Recorded rather than done.
 
 One caveat worth knowing before it wastes an afternoon: DevTools network
 throttling does **not** flip `navigator.onLine`, so the offline banner will not

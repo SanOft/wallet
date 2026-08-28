@@ -4,6 +4,29 @@ import type { Env } from "../../config/env.js"
 /** FR-2.4: the refresh token travels only here, never in a response body. */
 export const REFRESH_COOKIE = "wallet_refresh"
 
+/**
+ * A hint, readable by JavaScript, that a refresh cookie exists.
+ *
+ * The refresh cookie is `httpOnly` on purpose, so the client cannot tell a
+ * signed-out visitor from a signed-in one without asking — and it asked, on
+ * every cold start, by calling `/api/auth/refresh` and receiving a `401` for
+ * everyone who was not signed in. That is a guaranteed-to-fail request on the
+ * first paint of the login screen: a round trip spent on a connection NFR-3
+ * assumes is bad, and a browser console error on every anonymous page load.
+ *
+ * This carries no authority whatsoever. Its value is the string "1"; the
+ * server never reads it and must never trust it. It answers exactly one
+ * question, on the client, before any request: *is it worth asking?*
+ *
+ * Set and cleared in lockstep with the refresh cookie and with the same
+ * lifetime, because the failure that matters is the two disagreeing. If the
+ * hint outlives the refresh cookie the client makes one pointless call and
+ * falls back to anonymous — today's behaviour. If it were to die first, a
+ * signed-in user would meet the login screen, which is why the attributes are
+ * derived from the same function rather than written twice.
+ */
+export const SESSION_HINT_COOKIE = "wallet_session"
+
 /** FR-2.4: thirty days, in milliseconds. */
 const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -59,8 +82,23 @@ function refreshCookieOptions(env: Env): CookieOptions {
   }
 }
 
+/**
+ * The hint's attributes, from the refresh cookie's, with two differences.
+ *
+ * `httpOnly: false` is the entire point — a hint no script can read hints at
+ * nothing. `path: "/"` because the refresh cookie is scoped to `/api/auth`,
+ * and a cookie the application cannot read on its own pages is equally
+ * useless.
+ */
+function sessionHintOptions(env: Env): CookieOptions {
+  return { ...refreshCookieOptions(env), httpOnly: false, path: "/" }
+}
+
 export function setRefreshCookie(res: Response, env: Env, token: string): void {
   res.cookie(REFRESH_COOKIE, token, refreshCookieOptions(env))
+  // Never the token, and never anything derived from it: a value that is safe
+  // to read is a value that says nothing.
+  res.cookie(SESSION_HINT_COOKIE, "1", sessionHintOptions(env))
 }
 
 export function clearRefreshCookie(res: Response, env: Env): void {
@@ -68,4 +106,10 @@ export function clearRefreshCookie(res: Response, env: Env): void {
   // original and a "logged out" user is still holding a live token.
   const { maxAge: _maxAge, ...options } = refreshCookieOptions(env)
   res.clearCookie(REFRESH_COOKIE, options)
+
+  // Cleared together, always. A hint left behind after logout sends the next
+  // visit to a refresh call that cannot succeed — the exact request this
+  // cookie exists to avoid.
+  const { maxAge: _hintMaxAge, ...hintOptions } = sessionHintOptions(env)
+  res.clearCookie(SESSION_HINT_COOKIE, hintOptions)
 }

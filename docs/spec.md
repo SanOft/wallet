@@ -162,7 +162,8 @@ Every requirement is numbered and verifiable. Acceptance criteria are written in
 - **FR-6.2** New recipient: max 500,000 UZS within the first 24 hours.
 - **FR-6.3** Velocity: more than 5 transfers in 5 minutes → block + additional confirmation.
 - **FR-6.4** Immediate in-app notification after every outgoing transaction (v2: Telegram).
-- **FR-6.5** Permanent copy: "Wallet staff will never ask for your PIN or SMS code." (original: _"Wallet xodimlari hech qachon PIN yoki SMS koddan so'ramaydi."_)
+- **FR-6.5** Permanent copy: "Wallet staff will never ask you to send them your PIN or SMS code." (original: _"Wallet xodimlari hech qachon PIN yoki SMS kodni yuborishingizni so'ramaydi."_)
+  The wording is deliberate: "never ask for" is ambiguous in Uzbek — a caller *can* legitimately ask you to enter a code in the app — while "never ask you to **send** it" names the exact act a fraudster needs, which is the one the customer has to refuse.
 
 ## FR-7. Exchange rates
 
