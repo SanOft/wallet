@@ -1,0 +1,340 @@
+import { randomUUID } from "node:crypto"
+import type { PrismaClient } from "@prisma/client"
+import { maskRecipientName } from "@wallet/shared"
+import request from "supertest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { seed } from "../prisma/seed.js"
+import { createPrismaClient } from "../src/infra/prisma.js"
+import { buildApp, testEnv } from "./helpers.js"
+
+/**
+ * `GET /api/transfers` — FR-5.
+ *
+ * The tests that matter here are the ones about *position*: a history screen
+ * is read while money is arriving, so the interesting failures are a row shown
+ * twice and a row never shown at all. Offset pagination produces both, which
+ * is why §12.2 forbids it, and a keyset that ignores ties produces the second
+ * one alone — invisibly, because the page still looks full.
+ */
+
+const hasDatabase = Boolean(process.env.DATABASE_URL)
+const PASSWORD = ["orbit", "walnut", "lantern", "quiet"].join("-")
+
+function uniquePhone(): string {
+  return `+99893${Math.floor(1_000_000 + Math.random() * 8_999_999)}`
+}
+
+describe.skipIf(!hasDatabase)("FR-5 — transaction history", () => {
+  let prisma: PrismaClient
+
+  beforeAll(async () => {
+    prisma = createPrismaClient(testEnv({ ...process.env }))
+    await seed(prisma)
+  })
+  afterAll(async () => {
+    await prisma.$disconnect()
+  })
+
+  async function newUser(firstName = "Muhammadali", lastName = "Toshmatov") {
+    const { app } = buildApp(prisma, { ...process.env })
+    const phone = uniquePhone()
+    const res = await request(app)
+      .post("/api/auth/register")
+      .send({ phone, firstName, lastName, password: PASSWORD })
+    return {
+      app,
+      phone,
+      firstName,
+      lastName,
+      token: res.body.accessToken as string,
+      id: res.body.user.id as string,
+    }
+  }
+
+  type User = Awaited<ReturnType<typeof newUser>>
+
+  async function topup(user: User) {
+    const res = await request(user.app)
+      .post("/api/accounts/topup")
+      .set("authorization", `Bearer ${user.token}`)
+      .set("idempotency-key", randomUUID())
+      .send()
+    // The body in the message: a bare "expected 400 to be 201" from a helper
+    // says which line failed and nothing about why.
+    expect(res.status, JSON.stringify(res.body)).toBe(201)
+    return res.body as { id: string }
+  }
+
+  async function send(from: User, to: User, amount: string) {
+    const res = await request(from.app)
+      .post("/api/transfers")
+      .set("authorization", `Bearer ${from.token}`)
+      .set("idempotency-key", randomUUID())
+      .send({ phone: to.phone, amount })
+    expect(res.status, JSON.stringify(res.body)).toBe(201)
+    return res.body as { id: string }
+  }
+
+  async function history(user: User, query = "") {
+    return request(user.app)
+      .get(`/api/transfers${query}`)
+      .set("authorization", `Bearer ${user.token}`)
+  }
+
+  describe("what a row says (FR-5.3)", () => {
+    it("names the counterparty on a transfer and nobody on a top-up", async () => {
+      const sender = await newUser("Alisher", "Navoiy")
+      const recipient = await newUser("Zulfiya", "Karimova")
+      await topup(sender)
+      await send(sender, recipient, "100000")
+
+      const mine = await history(sender)
+      expect(mine.status).toBe(200)
+
+      const [transfer, credit] = mine.body.items as Array<{
+        type: string
+        direction: string
+        amount: string
+        counterparty: { maskedName: string } | null
+      }>
+
+      expect(transfer?.type).toBe("P2P")
+      expect(transfer?.direction).toBe("outgoing")
+      expect(transfer?.counterparty?.maskedName).toBe(maskRecipientName("Zulfiya", "Karimova"))
+
+      // The other side of a top-up is the treasury. Naming it would be
+      // describing plumbing to someone who asked where their money came from.
+      expect(credit?.type).toBe("TOPUP")
+      expect(credit?.direction).toBe("incoming")
+      expect(credit?.counterparty).toBeNull()
+    })
+
+    it("keeps the amount unsigned and lets the direction carry the sign", async () => {
+      const sender = await newUser("Alisher", "Navoiy")
+      const recipient = await newUser("Zulfiya", "Karimova")
+      await topup(sender)
+      await send(sender, recipient, "100000")
+
+      const out = (await history(sender)).body.items[0]
+      const inbound = (await history(recipient)).body.items[0]
+
+      // The same transfer, seen from both ends: one number, two directions.
+      expect(out.id).toBe(inbound.id)
+      expect(out.amount).toBe("100000")
+      expect(inbound.amount).toBe("100000")
+      expect(out.direction).toBe("outgoing")
+      expect(inbound.direction).toBe("incoming")
+
+      // A minus sign on the wire would let one flipped comparison render an
+      // incoming payment as a debit.
+      expect(inbound.amount.startsWith("-")).toBe(false)
+    })
+
+    it("shows the full name masked exactly as the lookup masks it", async () => {
+      const sender = await newUser("Alisher", "Navoiy")
+      const recipient = await newUser("Zulfiya", "Karimova")
+      await topup(sender)
+      await send(sender, recipient, "100000")
+
+      const row = (await history(sender)).body.items[0]
+
+      // Not the surname, and not the phone number: FR-4.9 pays for this mask
+      // on the lookup endpoint, and a different rule here would return what it
+      // withholds.
+      expect(row.counterparty.maskedName).not.toContain("Karimova")
+      expect(JSON.stringify(row)).not.toContain(recipient.phone)
+    })
+  })
+
+  describe("whose history it is", () => {
+    it("never shows a transfer between two other people", async () => {
+      const sender = await newUser()
+      const recipient = await newUser()
+      const stranger = await newUser()
+      await topup(sender)
+      const moved = await send(sender, recipient, "100000")
+
+      const theirs = await history(stranger)
+
+      expect(theirs.status).toBe(200)
+      expect(theirs.body.items).toHaveLength(0)
+      expect(JSON.stringify(theirs.body)).not.toContain(moved.id)
+    })
+  })
+
+  describe("paging a list that is still growing (FR-5.1, §12.2)", () => {
+    it("walks every row exactly once across pages", async () => {
+      const user = await newUser()
+      const other = await newUser()
+      await topup(user)
+      for (let i = 0; i < 5; i++) await send(user, other, "100000")
+
+      // Six rows: one top-up and five transfers.
+      const seen: string[] = []
+      let cursor: string | null = null
+      let pages = 0
+
+      do {
+        const query: string = cursor ? `?limit=2&cursor=${encodeURIComponent(cursor)}` : "?limit=2"
+        const page = await history(user, query)
+        expect(page.status).toBe(200)
+
+        seen.push(...page.body.items.map((item: { id: string }) => item.id))
+        cursor = page.body.nextCursor
+        pages++
+      } while (cursor && pages < 10)
+
+      expect(seen).toHaveLength(6)
+      expect(new Set(seen).size).toBe(6)
+      expect(cursor).toBeNull()
+    })
+
+    it("is ordered newest first, and stays ordered across the page boundary", async () => {
+      const user = await newUser()
+      const other = await newUser()
+      await topup(user)
+      for (let i = 0; i < 3; i++) await send(user, other, "100000")
+
+      const first = await history(user, "?limit=2")
+      const second = await history(
+        user,
+        `?limit=2&cursor=${encodeURIComponent(first.body.nextCursor)}`,
+      )
+
+      const times = [...first.body.items, ...second.body.items].map((item: { createdAt: string }) =>
+        Date.parse(item.createdAt),
+      )
+      const descending = [...times].sort((a, b) => b - a)
+      expect(times).toEqual(descending)
+    })
+
+    it("does not lose a row to a tie on createdAt", async () => {
+      const user = await newUser()
+      const other = await newUser()
+      await topup(user)
+      await send(user, other, "100000")
+      await send(user, other, "200000")
+
+      // Two transfers stamped identically — the case a cursor of `createdAt`
+      // alone skips, because the second row is not strictly older than the
+      // first. Forced rather than raced: the natural version of this test
+      // passes on a slow machine and fails on a fast one.
+      const rows = await prisma.transfer.findMany({
+        where: { initiatedBy: user.id, type: "P2P" },
+        orderBy: { createdAt: "asc" },
+        select: { id: true },
+      })
+      expect(rows).toHaveLength(2)
+      const stamp = new Date("2026-08-20T10:00:00.000Z")
+      await prisma.transfer.updateMany({
+        where: { id: { in: rows.map((row) => row.id) } },
+        data: { createdAt: stamp },
+      })
+      // And the top-up pushed behind them, or it becomes the newest row and
+      // the two pages under test are no longer the two tied ones.
+      await prisma.transfer.updateMany({
+        where: { initiatedBy: user.id, type: "TOPUP" },
+        data: { createdAt: new Date("2026-08-20T09:00:00.000Z") },
+      })
+
+      const first = await history(user, "?limit=1")
+      const second = await history(
+        user,
+        `?limit=1&cursor=${encodeURIComponent(first.body.nextCursor)}`,
+      )
+
+      expect(first.body.items[0].id).not.toBe(second.body.items[0].id)
+      expect([first.body.items[0].id, second.body.items[0].id].sort()).toEqual(
+        rows.map((row) => row.id).sort(),
+      )
+    })
+
+    it("reports no next page on the last one", async () => {
+      const user = await newUser()
+      await topup(user)
+
+      const only = await history(user)
+      expect(only.body.items).toHaveLength(1)
+      expect(only.body.nextCursor).toBeNull()
+    })
+  })
+
+  describe("filters (FR-5.2)", () => {
+    it("separates incoming from outgoing", async () => {
+      const user = await newUser()
+      const other = await newUser()
+      await topup(user)
+      await send(user, other, "100000")
+
+      const outgoing = await history(user, "?direction=outgoing")
+      const incoming = await history(user, "?direction=incoming")
+
+      expect(outgoing.body.items).toHaveLength(1)
+      expect(outgoing.body.items[0].type).toBe("P2P")
+      expect(incoming.body.items).toHaveLength(1)
+      expect(incoming.body.items[0].type).toBe("TOPUP")
+
+      // The filter and the field have to agree. Asserting only the type let a
+      // mutation that hard-codes every row to "outgoing" through this test —
+      // the rows returned were still the right ones, each labelled wrongly.
+      expect(outgoing.body.items[0].direction).toBe("outgoing")
+      expect(incoming.body.items[0].direction).toBe("incoming")
+    })
+
+    it("bounds by date, inclusively at both ends", async () => {
+      const user = await newUser()
+      await topup(user)
+
+      const [row] = (await history(user)).body.items as Array<{ createdAt: string }>
+      const at = row?.createdAt as string
+
+      const inside = await history(
+        user,
+        `?from=${encodeURIComponent(at)}&to=${encodeURIComponent(at)}`,
+      )
+      expect(inside.body.items).toHaveLength(1)
+
+      const after = await history(user, `?from=${encodeURIComponent("2099-01-01T00:00:00.000Z")}`)
+      expect(after.body.items).toHaveLength(0)
+    })
+
+    it("selects by status", async () => {
+      const user = await newUser()
+      await topup(user)
+
+      expect((await history(user, "?status=COMPLETED")).body.items).toHaveLength(1)
+      expect((await history(user, "?status=FAILED")).body.items).toHaveLength(0)
+    })
+  })
+
+  describe("what the endpoint refuses", () => {
+    it("refuses a page larger than FR-5.1 allows", async () => {
+      const user = await newUser()
+
+      const res = await history(user, "?limit=100")
+
+      expect(res.status).toBe(400)
+      expect(res.body.error.code).toBe("VALIDATION_ERROR")
+    })
+
+    it("answers a malformed cursor with a field error, not a 500", async () => {
+      const user = await newUser()
+
+      const res = await history(user, "?cursor=not-a-real-cursor")
+
+      // A cursor the server did not mint is a client fault. Returning 500
+      // would make it look like ours and put it in the wrong log.
+      expect(res.status).toBe(400)
+      expect(res.body.error.code).toBe("VALIDATION_ERROR")
+      expect(res.body.error.details).toContainEqual({ path: ["cursor"], code: "cursor.invalid" })
+    })
+
+    it("requires a token", async () => {
+      const { app } = buildApp(prisma, { ...process.env })
+
+      const res = await request(app).get("/api/transfers")
+
+      expect(res.status).toBe(401)
+    })
+  })
+})

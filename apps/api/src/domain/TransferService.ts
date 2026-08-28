@@ -8,10 +8,13 @@ import {
   DEMO_TOPUP_MAX_PER_DAY,
   DEMO_TOPUP_WINDOW_HOURS,
   type FieldIssue,
+  type HistoryItem,
+  maskRecipientName,
   NEW_RECIPIENT_LIMIT,
   NEW_RECIPIENT_WINDOW_HOURS,
   TRANSFER_LIMITS,
   type TransferChannel,
+  type TransferDirection,
   VELOCITY_MAX_TRANSFERS,
   VELOCITY_WINDOW_MINUTES,
 } from "@wallet/shared"
@@ -132,6 +135,44 @@ type StoredOutcome =
       readonly details?: readonly FieldIssue[]
     }
 
+/** FR-5's query, already parsed: the route owns the strings, this owns dates. */
+export interface HistoryInput {
+  readonly userId: string
+  /*
+   * `null` rather than optional, for every filter.
+   *
+   * `exactOptionalPropertyTypes` is on, so `cursor?: string` forbids passing
+   * `undefined` explicitly — and the caller is a route holding parsed query
+   * values that are naturally absent. The alternatives were five conditional
+   * spreads at the call site or `| undefined`, which appears nowhere else in
+   * this codebase. "Absent" and "explicitly nothing" mean the same thing for a
+   * filter, so saying so once here is cheaper than proving it at each call.
+   */
+  readonly cursor: string | null
+  readonly from: Date | null
+  readonly to: Date | null
+  readonly direction: TransferDirection | null
+  readonly status: TransferResult["status"] | "PENDING" | null
+  readonly limit: number
+}
+
+/**
+ * A row on the way out, in domain types: `bigint` and `Date`, not strings.
+ *
+ * §9.3 keeps money as `bigint` everywhere inside the service; the conversion
+ * to a decimal string is a wire concern and happens once, in the route. A
+ * domain that returned strings would invite arithmetic on them.
+ */
+export interface HistoryRow extends Omit<HistoryItem, "amount" | "createdAt"> {
+  readonly amount: bigint
+  readonly createdAt: Date
+}
+
+export interface HistoryPage {
+  readonly rows: readonly HistoryRow[]
+  readonly nextCursor: string | null
+}
+
 export interface TransferServiceDependencies {
   readonly prisma: PrismaClient
   readonly now?: () => Date
@@ -194,6 +235,118 @@ export class TransferService {
     }
 
     throw lastConflict
+  }
+
+  /**
+   * FR-5: one page of the caller's own history, newest first.
+   *
+   * In the service rather than the route, for the reason §8.3 gives and P-19
+   * records as a mistake already made twice: the USSD channel will need the
+   * same list, and a query written in an Express handler is a query the other
+   * adapter has to write again from memory.
+   *
+   * Keyset pagination, not offset (§12.2). A page boundary expressed as "skip
+   * 20" moves when a new transfer arrives — which, on the screen where money
+   * lands, it constantly does — and the reader silently sees a row twice or
+   * never. `(createdAt, id)` is a total order, so a cursor names a position
+   * rather than a count.
+   *
+   * The ownership filter is an OR across two indexed columns, which Postgres
+   * answers with a bitmap and a sort rather than an ordered index walk. That
+   * is the right trade at MVP volumes and the wrong one at a million rows,
+   * where the shape becomes two ordered scans merged; recorded here rather
+   * than pre-built, because the fix needs raw SQL and the volume to justify it.
+   */
+  async history(input: HistoryInput): Promise<HistoryPage> {
+    const accounts = await this.#prisma.account.findMany({
+      where: { userId: input.userId },
+      select: { id: true },
+    })
+    const mine = accounts.map((account) => account.id)
+
+    // No account is not an error: a user exists before their account does in
+    // exactly one window, and an empty page is the truthful answer.
+    if (mine.length === 0) return { rows: [], nextCursor: null }
+
+    const ownership: Prisma.TransferWhereInput =
+      input.direction === "incoming"
+        ? { toAccountId: { in: mine } }
+        : input.direction === "outgoing"
+          ? { fromAccountId: { in: mine } }
+          : { OR: [{ fromAccountId: { in: mine } }, { toAccountId: { in: mine } }] }
+
+    const cursor = input.cursor ? decodeCursor(input.cursor) : null
+
+    const where: Prisma.TransferWhereInput = {
+      AND: [
+        ownership,
+        ...(input.status ? [{ status: input.status }] : []),
+        ...(input.from ? [{ createdAt: { gte: input.from } }] : []),
+        ...(input.to ? [{ createdAt: { lte: input.to } }] : []),
+        ...(cursor
+          ? [
+              {
+                OR: [
+                  { createdAt: { lt: cursor.createdAt } },
+                  // The tiebreaker, and the reason two transfers in the same
+                  // millisecond do not hide each other at a page edge.
+                  { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+                ],
+              },
+            ]
+          : []),
+      ],
+    }
+
+    // One more than asked for: whether a next page exists is answered by
+    // finding a row, not by a second COUNT over the same predicate.
+    const found = await this.#prisma.transfer.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: input.limit + 1,
+      select: {
+        id: true,
+        createdAt: true,
+        status: true,
+        type: true,
+        channel: true,
+        amount: true,
+        fromAccountId: true,
+        fromAccount: { select: { type: true, user: PARTY } },
+        toAccount: { select: { type: true, user: PARTY } },
+      },
+    })
+
+    const page = found.slice(0, input.limit)
+    const last = page.at(-1)
+
+    return {
+      rows: page.map((transfer) => {
+        const outgoing = mine.includes(transfer.fromAccountId)
+        const other = outgoing ? transfer.toAccount : transfer.fromAccount
+
+        return {
+          id: transfer.id,
+          createdAt: transfer.createdAt,
+          status: transfer.status,
+          type: transfer.type,
+          channel: transfer.channel,
+          direction: outgoing ? ("outgoing" as const) : ("incoming" as const),
+          amount: transfer.amount,
+          /*
+           * Keyed on the account being the treasury rather than on the
+           * transfer being a TOPUP: the two agree today, and if they ever stop
+           * agreeing it is the account that decides whether there is a person
+           * on the other side to name.
+           */
+          counterparty:
+            other.type === "TREASURY"
+              ? null
+              : { maskedName: maskRecipientName(other.user.firstName, other.user.lastName) },
+        }
+      }),
+      nextCursor: found.length > input.limit && last ? encodeCursor(last.createdAt, last.id) : null,
+    }
   }
 
   /** Turns a stored outcome back into a return value or the original refusal. */
@@ -775,4 +928,33 @@ function parseOutcome(stored: Prisma.JsonValue): StoredOutcome | null {
       senderBalanceAfter: BigInt(value.senderBalanceAfter as string),
     },
   }
+}
+
+/** The counterparty fields, named once so both sides of a transfer agree. */
+const PARTY = { select: { firstName: true, lastName: true } } as const
+
+/**
+ * A page position, encoded so it cannot be read as an invitation to edit it.
+ *
+ * base64url rather than JSON: not secrecy — the contents are two values the
+ * caller already has — but a token that looks like a token is returned
+ * unchanged, while `{"createdAt":...}` gets parsed, adjusted, and sent back as
+ * something the server never issued.
+ */
+function encodeCursor(createdAt: Date, id: string): string {
+  return Buffer.from(`${createdAt.toISOString()}|${id}`, "utf8").toString("base64url")
+}
+
+function decodeCursor(raw: string): { createdAt: Date; id: string } {
+  const invalid = new ValidationError([{ path: ["cursor"], code: "cursor.invalid" }])
+
+  const [timestamp, id, ...rest] = Buffer.from(raw, "base64url").toString("utf8").split("|")
+  // `rest` matters: an id containing the separator would otherwise be silently
+  // truncated into a different, valid-looking position.
+  if (!timestamp || !id || rest.length > 0) throw invalid
+
+  const createdAt = new Date(timestamp)
+  if (Number.isNaN(createdAt.getTime())) throw invalid
+
+  return { createdAt, id }
 }
