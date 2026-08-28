@@ -167,7 +167,7 @@ Every requirement is numbered and verifiable. Acceptance criteria are written in
 ## FR-7. Exchange rates
 
 - **FR-7.1** UZS/USD, UZS/EUR — source: the Central Bank of Uzbekistan's open JSON API `https://cbu.uz/uz/arkhiv-kursov-valyut/json/` (no authentication; fields: `Ccy`, `Rate`, `Diff`, `Nominal`, `Date` — verified live on 2026-08-11).
-- **FR-7.2** Server-side 1-hour cache; if the API is down, the last known value is shown together with its date.
+- **FR-7.2** Server-side 1-hour cache; if the API is down, the last known value is shown together with its date and an explicit `stale: true` — a boolean on the response rather than an inference the client draws from a timestamp, because the TTL is a server-side policy and two clients computing staleness will eventually disagree with each other and with the cache. The reading is **persisted** (`rates_snapshots`, one row, enforced by a CHECK), so an instance that wakes to an unreachable bank still has its predecessor's value and a second instance reuses it rather than paying for its own. Only a deployment whose database has never held a rate answers `503 RATES_UNAVAILABLE`.
 - **FR-7.3** Informational only — no conversion (MVP).
 
 ## FR-8. Offline mode (PWA)
@@ -772,6 +772,7 @@ Field codes appear inside `VALIDATION_ERROR` (which field failed) and inside `LI
 | `IDEMPOTENCY_CONFLICT`     | 409  | Same key + different payload                 | (technical error — with a support ID)                                                                          |
 | `PIN_NOT_SET`              | 422  | USSD transfer without a PIN                  | "Set your PIN in the app first."                                                                               |
 | `PIN_LOCKED`               | 429  | 3 wrong PIN attempts                         | "PIN is blocked. Try again in 1 hour."                                                                         |
+| `RATES_UNAVAILABLE`        | 503  | The central bank is unreachable and this process holds no cached rate (FR-7.2) | "Kurslar hozircha mavjud emas." — the wallet is fully usable without them |
 | `INTERNAL`                 | 500  | Unexpected error (logged with `requestId`)   | "Technical failure. The operation was not performed."                                                          |
 
 **Principle:** 4xx — client error, never retried (FR-8.4); 5xx — server error, retryable with backoff, because idempotency makes it safe.
