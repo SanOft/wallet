@@ -250,6 +250,63 @@ describe.skipIf(!hasDatabase)("step-up on a large transfer (FR-2.8)", () => {
     })
   }
 
+  /**
+   * Over HTTP, not through the service.
+   *
+   * Every other test in this block calls `execute` directly, which proves the
+   * rule and proves nothing about the two lines that carry a password from a
+   * request body to it. Those two lines were missing, every large transfer was
+   * refused however carefully the password was typed, and no test noticed.
+   */
+  it("carries the confirmation from the request body to the rule", async () => {
+    const { app } = buildApp(prisma, { ...process.env })
+    const phone = uniquePhone()
+    const registered = await request(app)
+      .post("/api/auth/register")
+      .send({ phone, firstName: "Alisher", lastName: "Navoiy", password: SECRET })
+    const token = registered.body.accessToken as string
+
+    for (let i = 0; i < 3; i++) {
+      await request(app)
+        .post("/api/accounts/topup")
+        .set("authorization", `Bearer ${token}`)
+        .set("idempotency-key", randomUUID())
+        .send()
+    }
+
+    const recipient = await funded(0)
+
+    // An established relationship, so FR-6.2 does not answer first.
+    await request(app)
+      .post("/api/transfers")
+      .set("authorization", `Bearer ${token}`)
+      .set("idempotency-key", randomUUID())
+      .send({ phone: recipient.phone, amount: "100000" })
+    await prisma.transfer.updateMany({
+      where: { initiatedBy: registered.body.user.id as string },
+      data: { createdAt: new Date(Date.now() - 48 * 60 * 60 * 1000) },
+    })
+
+    const withoutIt = await request(app)
+      .post("/api/transfers")
+      .set("authorization", `Bearer ${token}`)
+      .set("idempotency-key", randomUUID())
+      .send({ phone: recipient.phone, amount: (STEP_UP_THRESHOLD + 100n).toString() })
+    expect(withoutIt.status).toBe(422)
+    expect(withoutIt.body.error.code).toBe("STEP_UP_REQUIRED")
+
+    const withIt = await request(app)
+      .post("/api/transfers")
+      .set("authorization", `Bearer ${token}`)
+      .set("idempotency-key", randomUUID())
+      .send({
+        phone: recipient.phone,
+        amount: (STEP_UP_THRESHOLD + 100n).toString(),
+        password: SECRET,
+      })
+    expect(withIt.status, JSON.stringify(withIt.body)).toBe(201)
+  })
+
   it("lets a transfer at the threshold through untouched", async () => {
     const sender = await funded()
     const recipient = await funded()

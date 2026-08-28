@@ -10,6 +10,7 @@ import {
   watchOutbox,
 } from "../../lib/outbox.js"
 import { accountsApi } from "../accounts/api.js"
+import { transferApi } from "../transfer/api.js"
 import { classify, MAX_ATTEMPTS, waitBefore } from "./policy.js"
 
 /**
@@ -54,7 +55,22 @@ async function send(
   dispatch: ReturnType<typeof useAppDispatch>,
   item: OutboxItem,
 ): Promise<{ status: number | null; code: string | null }> {
-  const result = await dispatch(accountsApi.endpoints.topUp.initiate({ idempotencyKey: item.key }))
+  /*
+   * The endpoint follows the record's kind. A queued transfer carries the
+   * recipient and the amount it was created with — and deliberately no
+   * password: a credential must never be written to IndexedDB, which is why a
+   * transfer large enough to need one is refused at the confirmation screen
+   * rather than queued to fail later.
+   */
+  const result =
+    item.kind === "transfer"
+      ? await dispatch(
+          transferApi.endpoints.createTransfer.initiate({
+            ...(item.body as { phone: string; amount: string }),
+            idempotencyKey: item.key,
+          }),
+        )
+      : await dispatch(accountsApi.endpoints.topUp.initiate({ idempotencyKey: item.key }))
 
   if (!("error" in result) || result.error === undefined) return { status: 200, code: null }
 
