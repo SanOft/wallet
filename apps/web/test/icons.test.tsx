@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react"
 import { beforeEach, describe, expect, it } from "vitest"
-import { App } from "../src/app/App.js"
 import { FormField } from "../src/components/FormField.js"
+import { renderSignedIn } from "./renderApp.js"
 
 /**
  * §13.7: "All icons are `aria-hidden` and have a text equivalent."
@@ -62,8 +62,8 @@ describe("the rule itself", () => {
 })
 
 describe("every icon in the application obeys it", () => {
-  it("holds across the shell, including the tab bar", () => {
-    const { container } = render(<App />)
+  it("holds across the shell, including the tab bar", async () => {
+    const { container } = await renderSignedIn()
 
     // If this rendered nothing the rule would pass by finding nothing, which
     // is how an accessibility check quietly stops working.
@@ -97,8 +97,8 @@ describe("every icon in the application obeys it", () => {
     expect(container.textContent).toContain("Eng kam summa")
   })
 
-  it("names each tab in text, so the icon is never the only label", () => {
-    const { container } = render(<App />)
+  it("names each tab in text, so the icon is never the only label", async () => {
+    const { container } = await renderSignedIn()
 
     for (const tab of container.querySelectorAll("nav a")) {
       // The icon is hidden; without the label the tab would announce as an

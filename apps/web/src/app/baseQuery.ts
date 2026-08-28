@@ -1,4 +1,9 @@
-import type { BaseQueryFn, FetchArgs, FetchBaseQueryError } from "@reduxjs/toolkit/query"
+import type {
+  BaseQueryFn,
+  FetchArgs,
+  FetchBaseQueryError,
+  FetchBaseQueryMeta,
+} from "@reduxjs/toolkit/query"
 import { fetchBaseQuery } from "@reduxjs/toolkit/query"
 import { credentialsReceived, signedOut } from "../features/auth/authSlice.js"
 import type { RootState } from "./store.js"
@@ -64,10 +69,25 @@ function targets(args: string | FetchArgs, path: string): boolean {
  */
 let refreshInFlight: Promise<boolean> | null = null
 
+/**
+ * The meta type is declared, not left to default.
+ *
+ * Without it `meta` is `{}` everywhere downstream, and `transformErrorResponse`
+ * cannot reach the response headers — which is where §12.3 puts `Retry-After`,
+ * the number the lockout screen counts down.
+ */
 export const baseQueryWithReauth: BaseQueryFn<
   string | FetchArgs,
   unknown,
-  FetchBaseQueryError
+  FetchBaseQueryError,
+  // RTK's own default for per-endpoint extraOptions. `{}` is the banned
+  // "anything non-nullish" type everywhere else, and is correct here for one
+  // reason: it is the exact type RTK declares, and narrowing it — to `object`
+  // or `Record<string, never>` — makes `extraOptions` mandatory on every
+  // endpoint that never uses it.
+  // biome-ignore lint/complexity/noBannedTypes: must match RTK's own default
+  {},
+  FetchBaseQueryMeta
 > = async (args, api, extraOptions) => {
   const first = await rawBaseQuery(args, api, extraOptions)
 
