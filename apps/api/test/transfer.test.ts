@@ -758,12 +758,31 @@ describe.skipIf(!hasDatabase)("S-7: the global invariant", () => {
   })
 
   it("every account's snapshot agrees with its journal (I-4)", async () => {
-    const ledger = new LedgerRepository(prisma)
+    /*
+     * One aggregate, not one query per account.
+     *
+     * This used to call `balanceOf` in a loop, which is `LedgerRepository`'s
+     * single-account read used N times — correct, and O(N) round trips against
+     * a table that only grows. It began timing out at five seconds once the
+     * development database held a few dozen accounts, and the honest reading
+     * of that is not "the timeout is too low": a whole-database invariant
+     * check should not scale with round trips at all.
+     *
+     * `groupBy` omits accounts with no entries, so they are compared against
+     * zero rather than skipped — an account holding a balance with an empty
+     * journal is precisely the drift I-4 exists to catch, and a `Map` lookup
+     * that quietly returns `undefined` would step over it.
+     */
     const accounts = await prisma.account.findMany({ select: { id: true, balance: true } })
+    const sums = await prisma.ledgerEntry.groupBy({
+      by: ["accountId"],
+      _sum: { amount: true },
+    })
+
+    const derived = new Map(sums.map((row) => [row.accountId, row._sum.amount ?? 0n]))
 
     for (const account of accounts) {
-      const derived = await ledger.balanceOf(account.id)
-      expect(account.balance, `account ${account.id} drifted`).toBe(derived)
+      expect(account.balance, `account ${account.id} drifted`).toBe(derived.get(account.id) ?? 0n)
     }
   })
 })

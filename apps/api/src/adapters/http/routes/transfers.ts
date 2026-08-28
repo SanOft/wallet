@@ -1,8 +1,18 @@
 import type { PrismaClient } from "@prisma/client"
-import { idempotencyKeySchema, transferRequestSchema, transferResponseSchema } from "@wallet/shared"
+import {
+  historyQuerySchema,
+  historyResponseSchema,
+  idempotencyKeySchema,
+  transferRequestSchema,
+  transferResponseSchema,
+} from "@wallet/shared"
 import { Router } from "express"
 import { DomainError, ValidationError } from "../../../domain/errors.js"
-import type { TransferResult, TransferService } from "../../../domain/TransferService.js"
+import type {
+  HistoryRow,
+  TransferResult,
+  TransferService,
+} from "../../../domain/TransferService.js"
 import type { TokenService } from "../../../infra/jwt.js"
 import { requireAuth } from "../middleware/requireAuth.js"
 import { requireCurrentSession } from "../middleware/requireCurrentSession.js"
@@ -58,7 +68,48 @@ export function transferRouter({ transfers, tokens, prisma }: TransferRouterDepe
     },
   )
 
+  /**
+   * `GET /api/transfers` (FR-5, §12.1).
+   *
+   * No `requireCurrentSession` here, and the omission is deliberate rather
+   * than forgotten. P-16 scoped that check to the routes where something
+   * irreversible happens, because it costs a database read on every call and
+   * this is one a client makes constantly. Reading one's own history with an
+   * access token minted moments before a revocation discloses what that same
+   * token already showed on the screen it was minted for.
+   */
+  router.get("/api/transfers", requireAuth(tokens), async (req, res) => {
+    const query = historyQuerySchema.parse(req.query)
+
+    if (!req.userId) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
+
+    const page = await transfers.history({
+      // Never from the query: whose history it is, is decided by the token.
+      userId: req.userId,
+      cursor: query.cursor ?? null,
+      from: query.from ? new Date(query.from) : null,
+      to: query.to ? new Date(query.to) : null,
+      direction: query.direction ?? null,
+      status: query.status ?? null,
+      limit: query.limit,
+    })
+
+    respond(res, 200, historyResponseSchema, {
+      items: page.rows.map(toHistoryWire),
+      nextCursor: page.nextCursor,
+    })
+  })
+
   return router
+}
+
+/** §12.2, §9.3: amounts leave as strings, dates as ISO 8601 UTC. */
+function toHistoryWire(row: HistoryRow) {
+  return {
+    ...row,
+    amount: row.amount.toString(),
+    createdAt: row.createdAt.toISOString(),
+  }
 }
 
 /** §12.2, §9.3: amounts leave as strings, dates as ISO 8601 UTC. */

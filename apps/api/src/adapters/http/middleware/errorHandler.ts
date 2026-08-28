@@ -45,6 +45,7 @@ const FALLBACK_MESSAGE: Record<ApiErrorCode, string> = {
   IDEMPOTENCY_CONFLICT: "Idempotency key reused with a different payload",
   PIN_NOT_SET: "PIN is not set",
   PIN_LOCKED: "PIN is locked",
+  RATES_UNAVAILABLE: "Exchange rates are temporarily unavailable",
   INTERNAL: "Internal error",
 }
 

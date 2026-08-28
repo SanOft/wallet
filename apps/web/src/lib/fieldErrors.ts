@@ -48,6 +48,9 @@ const MESSAGES: Record<FieldErrorCode, string> = {
 
   "name.invalid": "Ism harf bilan boshlanib, faqat harflardan iborat bo'lsin",
   "field.required": "Bu maydonni to'ldiring",
+  // Reached only when a stored page position no longer parses. The user did
+  // nothing wrong, so the message is an instruction rather than a complaint.
+  "cursor.invalid": "Ro'yxatni yangilang",
 
   "limit.per_operation": "Bu summa bitta o'tkazma chegarasidan oshadi",
   "limit.daily": "Bugungi limit tugadi. Ertaga qayta urinib ko'ring",

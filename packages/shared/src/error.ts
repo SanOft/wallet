@@ -31,6 +31,16 @@ export const apiErrorCodeSchema = z.enum([
   "IDEMPOTENCY_CONFLICT",
   "PIN_NOT_SET",
   "PIN_LOCKED",
+  /*
+   * FR-7.2's floor: the central bank could not be reached and this process has
+   * never held a rate to fall back to.
+   *
+   * Its own code rather than `INTERNAL`, because the two call for opposite
+   * client behaviour. `INTERNAL` means we are broken and the request should
+   * not be repeated; this means an upstream is down, the wallet is entirely
+   * usable without it, and the widget should say so and retry later.
+   */
+  "RATES_UNAVAILABLE",
   "INTERNAL",
 ])
 export type ApiErrorCode = z.infer<typeof apiErrorCodeSchema>
@@ -47,6 +57,13 @@ export const fieldErrorCodeSchema = z.enum([
   "password.too_long",
   "name.invalid",
   "field.required",
+  /*
+   * A malformed pagination cursor. Not something a person can type — it is a
+   * token the client is handed and must return unchanged — so it appears here
+   * only because §12.3 has one shape for "this field is wrong", and inventing
+   * a second shape for protocol arguments would double the client's parsing.
+   */
+  "cursor.invalid",
   "limit.per_operation",
   "limit.daily",
   "limit.new_recipient",
@@ -98,6 +115,10 @@ export const API_ERROR_STATUS = {
   IDEMPOTENCY_CONFLICT: 409,
   PIN_NOT_SET: 422,
   PIN_LOCKED: 429,
+  // 503, not 500: nothing here failed. Being >= 500 makes `isRetryable` true,
+  // which is the answer FR-8.4 should give — an upstream that is down now is
+  // the one kind of failure where repeating the request later works.
+  RATES_UNAVAILABLE: 503,
   INTERNAL: 500,
 } as const satisfies Record<ApiErrorCode, number>
 
