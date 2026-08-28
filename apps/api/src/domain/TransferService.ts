@@ -204,7 +204,10 @@ export class TransferService {
 
   async #replay(input: TransferInput, requestHash: string): Promise<StoredOutcome | null> {
     const record = await this.#prisma.idempotencyRecord.findUnique({
-      where: { key: input.idempotencyKey },
+      // Scoped by user (P-8). Looking the key up on its own put every client
+      // in one namespace, so one of them could occupy a value another was
+      // about to use.
+      where: { userId_key: { userId: input.senderUserId, key: input.idempotencyKey } },
       select: { userId: true, requestHash: true, response: true, expiresAt: true },
     })
 
@@ -221,10 +224,18 @@ export class TransferService {
        */
       await this.#prisma.$transaction([
         this.#prisma.idempotencyRecord.deleteMany({
-          where: { key: input.idempotencyKey, expiresAt: { lte: this.#now() } },
+          where: {
+            userId: input.senderUserId,
+            key: input.idempotencyKey,
+            expiresAt: { lte: this.#now() },
+          },
         }),
         this.#prisma.transfer.deleteMany({
-          where: { idempotencyKey: input.idempotencyKey, status: "FAILED" },
+          where: {
+            initiatedBy: input.senderUserId,
+            idempotencyKey: input.idempotencyKey,
+            status: "FAILED",
+          },
         }),
       ])
       return null
@@ -314,6 +325,9 @@ export class TransferService {
       data: {
         fromAccountId: from.id,
         toAccountId: to.id,
+        // Who asked, which is not derivable from the accounts: a top-up leaves
+        // the treasury, so its sender is nobody's account.
+        initiatedBy: input.senderUserId,
         amount: input.amount,
         type,
         channel: input.channel,
@@ -563,6 +577,7 @@ export class TransferService {
           data: {
             fromAccountId: sender.id,
             toAccountId: recipient.id,
+            initiatedBy: input.senderUserId,
             amount: input.amount,
             type: input.type ?? "P2P",
             channel: input.channel,

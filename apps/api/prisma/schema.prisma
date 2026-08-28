@@ -73,6 +73,7 @@ model User {
   refreshTokens RefreshToken[]
   authAttempts  AuthAttempt[]
   idempotency   IdempotencyRecord[]
+  transfers     Transfer[]          @relation("TransfersInitiated")
 
   @@map("users")
 }
@@ -109,16 +110,26 @@ model Transfer {
   status         TransferStatus  @default(PENDING)
   type           TransferType    @default(P2P)
   channel        TransferChannel @default(WEB)
+  /// Who asked for this transfer.
+  ///
+  /// Not derivable from the accounts: for a P2P transfer it is the sender, for
+  /// a demo top-up it is the *recipient*, because the money leaves the treasury
+  /// (§9.4). The idempotency key is scoped to this rather than to an account,
+  /// so scoping the record without scoping the transfer would only move the
+  /// collision one layer down.
+  initiatedBy    String          @db.Uuid
   /// Client-generated UUID v4, mandatory on every money-moving call (FR-4.4).
-  idempotencyKey String          @unique
+  idempotencyKey String
   failReason     String?
   createdAt      DateTime        @default(now()) @db.Timestamptz(3)
   completedAt    DateTime?
 
+  initiator     User          @relation("TransfersInitiated", fields: [initiatedBy], references: [id])
   fromAccount   Account       @relation("TransfersSent", fields: [fromAccountId], references: [id])
   toAccount     Account       @relation("TransfersReceived", fields: [toAccountId], references: [id])
   ledgerEntries LedgerEntry[]
 
+  @@unique([initiatedBy, idempotencyKey])
   @@index([fromAccountId, createdAt])
   @@index([toAccountId, createdAt])
   @@map("transfers")
@@ -149,9 +160,14 @@ model LedgerEntry {
 
 /// CHECK: statusCode between 100 and 599.
 model IdempotencyRecord {
-  /// The client-generated key is the primary key; there is nothing else to
-  /// identify a replay by.
-  key         String   @id
+  /// Scoped to the user who sent it (P-8).
+  ///
+  /// The key alone was the primary key, which put every client in one
+  /// namespace: one user claiming a key another was about to use turned their
+  /// transfer into a 409. Nothing was disclosed — the service already refuses
+  /// to replay a record belonging to someone else — but a buggy or hostile
+  /// client could block other people's payments with values it chooses.
+  key         String
   userId      String   @db.Uuid
   /// SHA-256 of the payload. Distinguishes a replay from a key collision with a
   /// different body, which is a 409 rather than a stored response (FR-4.4).
@@ -164,6 +180,7 @@ model IdempotencyRecord {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@id([userId, key])
   @@index([expiresAt])
   @@map("idempotency_records")
 }

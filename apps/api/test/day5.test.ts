@@ -155,7 +155,7 @@ describe.skipIf(!hasDatabase)("day 5 — top-up, accounts and lookup", () => {
       expect(failed?.status).toBe("FAILED")
       expect(failed?.failReason).toBe("LIMIT_EXCEEDED")
 
-      const stored = await prisma.idempotencyRecord.findUnique({ where: { key } })
+      const stored = await prisma.idempotencyRecord.findFirst({ where: { key } })
       expect(stored).not.toBeNull()
 
       // Replaying the key returns the stored refusal rather than executing.
