@@ -106,7 +106,23 @@ export class RatesService {
     const cached = this.#cached
     const now = this.#now()
 
-    if (cached && now.getTime() - cached.fetchedAt.getTime() < this.#ttlMs) {
+    const age = cached ? now.getTime() - cached.fetchedAt.getTime() : Number.POSITIVE_INFINITY
+
+    /*
+     * `age >= 0` is not defensive noise: a reading stamped in the future makes
+     * every future comparison pass, so the cache stops expiring and the values
+     * freeze permanently. Found by running the app against a database whose
+     * row had a tomorrow's timestamp in it — the widget showed the same rate
+     * for hours and nothing anywhere said why.
+     *
+     * The clock does not have to be tampered with for this to happen. The row
+     * can be written by another instance, and two machines disagreeing by a
+     * few seconds is ordinary; disagreeing by an hour is a misconfigured
+     * timezone. A negative age means the value cannot be reasoned about, so it
+     * is not treated as fresh — though it is still good enough to fall back to
+     * if the upstream is down, which is what `stale` is for.
+     */
+    if (cached && age >= 0 && age < this.#ttlMs) {
       // Returned with `stale: false` even though the values are up to an hour
       // old: inside the TTL is the definition of fresh that FR-7.2 sets, and a
       // rate the central bank publishes once a day does not change in an hour.

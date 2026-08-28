@@ -1,9 +1,11 @@
-import { type ReactNode, useState } from "react"
+import { setupListeners } from "@reduxjs/toolkit/query"
+import { type ReactNode, useEffect, useState } from "react"
 import { Provider } from "react-redux"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router"
 import { LoginScreen } from "../features/auth/LoginScreen.js"
 import { RegisterScreen } from "../features/auth/RegisterScreen.js"
 import { useSessionRestore } from "../features/auth/useSessionRestore.js"
+import { FormShowcase } from "../screens/FormShowcase.js"
 import { History } from "../screens/History.js"
 import { Home } from "../screens/Home.js"
 import { NotFound } from "../screens/NotFound.js"
@@ -114,6 +116,20 @@ function Shell() {
               </RequireAuth>
             }
           />
+          {/*
+            F0's design-system showcase, kept reachable rather than deleted:
+            its definition of done is a visual check at four widths and in both
+            themes, and that check needs somewhere to live now that the real
+            Home has taken the route it used to occupy.
+          */}
+          <Route
+            path="/design"
+            element={
+              <RequireAuth>
+                <FormShowcase />
+              </RequireAuth>
+            }
+          />
           <Route
             path="/profile"
             element={
@@ -148,6 +164,19 @@ function Shell() {
  */
 export function App() {
   const [store] = useState(makeStore)
+
+  /**
+   * Online/offline listening, tied to this mount rather than to the module.
+   *
+   * `setupListeners` used to run inside `makeStore`, which registers window
+   * listeners and returns an unsubscribe nobody called. One App in production
+   * makes that harmless; in tests it meant every store ever built stayed
+   * subscribed, so a reconnect refetched through instances that had been
+   * unmounted — and a test could watch a request go out that the component
+   * under test had not made. Cleaning up here is also what makes the leak
+   * impossible to reintroduce quietly.
+   */
+  useEffect(() => setupListeners(store.dispatch), [store])
 
   return (
     <Provider store={store}>

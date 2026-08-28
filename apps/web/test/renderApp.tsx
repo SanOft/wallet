@@ -34,10 +34,45 @@ export function stubSession(options: { readonly signedIn: boolean }) {
       )
     }
 
+    /*
+     * Contract-shaped, not `{}`.
+     *
+     * The shell tests used to answer every other call with an empty object,
+     * which the client now rejects as not matching the contract — correctly,
+     * since an empty object is what a proxy's error page looks like. Answering
+     * with the real shape keeps these tests about the shell rather than about
+     * the failure state of every widget inside it.
+     */
+    const body = FIXTURES[url] ?? {}
     return Promise.resolve(
-      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
     )
   })
+}
+
+/** The smallest response each home-screen endpoint will accept. */
+const FIXTURES: Readonly<Record<string, unknown>> = {
+  "/api/accounts": {
+    accounts: [{ id: "a1", currency: "UZS", balance: "100000000", type: "USER" }],
+    user: { id: "u1", phone: "+998901234567", firstName: "Alisher", lastName: "Navoiy" },
+  },
+  "/api/transfers": { items: [], nextCursor: null },
+  "/api/rates": {
+    rates: [
+      {
+        currency: "USD",
+        rate: "11801.23",
+        diff: "-22.46",
+        nominal: "1",
+        publishedOn: "2026-08-28",
+      },
+    ],
+    fetchedAt: "2026-08-28T10:00:00.000Z",
+    stale: false,
+  },
 }
 
 /** Renders and waits until the session question has been answered. */
