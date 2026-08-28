@@ -4,7 +4,9 @@ import type { Express } from "express"
 import { createApp } from "../src/adapters/http/app.js"
 import { type Env, loadEnv } from "../src/config/env.js"
 import { AuthService } from "../src/domain/AuthService.js"
+import { RatesService } from "../src/domain/RatesService.js"
 import { TransferService } from "../src/domain/TransferService.js"
+import type { RateFetcher } from "../src/infra/cbu.js"
 import { createTokenService } from "../src/infra/jwt.js"
 import { createLogger } from "../src/infra/logger.js"
 
@@ -42,6 +44,14 @@ export function buildApp(
   prisma: PrismaClient,
   envOverrides: NodeJS.ProcessEnv = {},
   now?: () => number,
+  /**
+   * The rates upstream, defaulted to one that refuses.
+   *
+   * A test that reaches the real central bank is a test that fails on a train,
+   * passes in CI on a good day, and quietly measures somebody else's uptime.
+   * Refusing by default means the only way to exercise rates is to say so.
+   */
+  fetcher: RateFetcher = () => Promise.reject(new Error("no rates upstream in tests")),
 ): BuiltApp {
   const lines: string[] = []
   const env = testEnv(envOverrides)
@@ -53,9 +63,10 @@ export function buildApp(
   const tokens = createTokenService(env)
   const auth = new AuthService({ prisma, tokens, pepper: env.JWT_SECRET })
   const transfers = new TransferService({ prisma })
+  const rates = new RatesService({ fetcher })
 
   return {
-    app: createApp({ prisma, log, env, auth, tokens, transfers, ...(now ? { now } : {}) }),
+    app: createApp({ prisma, log, env, auth, tokens, transfers, rates, ...(now ? { now } : {}) }),
     logText: () => lines.join(""),
   }
 }

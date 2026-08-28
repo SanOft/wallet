@@ -1,7 +1,9 @@
 import { createApp } from "./adapters/http/app.js"
 import { loadEnv } from "./config/env.js"
 import { AuthService } from "./domain/AuthService.js"
+import { RatesService } from "./domain/RatesService.js"
 import { TransferService } from "./domain/TransferService.js"
+import { fetchCbuRates } from "./infra/cbu.js"
 import { warmDummyHash } from "./infra/crypto.js"
 import { createTokenService } from "./infra/jwt.js"
 import { createLogger } from "./infra/logger.js"
@@ -39,8 +41,9 @@ async function main(): Promise<void> {
   const auth = new AuthService({ prisma, tokens, pepper: env.JWT_SECRET })
 
   const transfers = new TransferService({ prisma })
+  const rates = new RatesService({ fetcher: fetchCbuRates })
 
-  const app = createApp({ prisma, log, env, auth, tokens, transfers })
+  const app = createApp({ prisma, log, env, auth, tokens, transfers, rates })
   const server = app.listen(env.PORT, () => {
     log.info({ port: env.PORT, env: env.NODE_ENV }, "wallet-api listening")
   })

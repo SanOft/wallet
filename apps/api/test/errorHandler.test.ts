@@ -65,6 +65,7 @@ describe("error envelope (spec §12.3)", () => {
     ["IDEMPOTENCY_CONFLICT", 409],
     ["PIN_NOT_SET", 422],
     ["PIN_LOCKED", 429],
+    ["RATES_UNAVAILABLE", 503],
     ["INTERNAL", 500],
   ]
 
