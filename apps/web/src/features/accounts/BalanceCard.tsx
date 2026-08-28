@@ -1,9 +1,9 @@
-import { formatMoney } from "@wallet/shared"
+import { accountsResponseSchema, formatMoney } from "@wallet/shared"
 import { TriangleAlert } from "lucide-react"
 import { FreshnessLine } from "../../components/Freshness.js"
 import { Skeleton } from "../../components/Skeleton.js"
 import { knownCurrency } from "../../lib/currency.js"
-import { freshnessOf, useOnline } from "../../lib/freshness.js"
+import { useCachedQuery } from "../../lib/useCachedQuery.js"
 import { useAccountsQuery } from "./api.js"
 
 /**
@@ -24,13 +24,17 @@ import { useAccountsQuery } from "./api.js"
  */
 export function BalanceCard() {
   const query = useAccountsQuery()
-  const online = useOnline()
-  const freshness = freshnessOf(query, online)
+  /*
+   * FR-8.2: the last balance this device saw, if the network has not answered
+   * yet. It arrives with the moment it was fetched, so the line underneath is
+   * about the number actually on screen rather than about the request.
+   */
+  const { data, freshness } = useCachedQuery("accounts", accountsResponseSchema, query)
 
   // MVP is one UZS account (FR-3.1), but the response is a list because §21's
   // Q-3 keeps a second currency non-breaking — so this picks rather than
   // assumes `[0]`.
-  const found = query.data?.accounts.find((candidate) => candidate.type === "USER")
+  const found = data?.accounts.find((candidate) => candidate.type === "USER")
 
   /*
    * An account whose currency this build cannot format is treated as no

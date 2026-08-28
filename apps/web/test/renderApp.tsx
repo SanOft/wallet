@@ -24,14 +24,19 @@ import { resetSessionRestore } from "../src/features/auth/useSessionRestore.js"
  * forgets this one is testing a request nobody makes.
  */
 export function giveSessionHint(): void {
-  // biome-ignore lint/suspicious/noDocumentCookie: the rule prefers CookieStore,
-  // which jsdom does not implement — and this is the API the code under test
-  // reads, so writing through a different one would test nothing.
+  /*
+   * The rule prefers `CookieStore`, which jsdom does not implement — and
+   * `document.cookie` is the API the code under test reads, so writing through
+   * a different one would test nothing. The suppression has to be the *last*
+   * comment line before the statement, which is why the reasoning sits above
+   * it rather than inside it.
+   */
+  // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no CookieStore
   document.cookie = "wallet_session=1; path=/"
 }
 
 export function clearSessionHint(): void {
-  // biome-ignore lint/suspicious/noDocumentCookie: see giveSessionHint.
+  // biome-ignore lint/suspicious/noDocumentCookie: see giveSessionHint
   document.cookie = "wallet_session=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT"
 }
 

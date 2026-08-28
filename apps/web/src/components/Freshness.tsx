@@ -28,13 +28,33 @@ export function FreshnessLine(props: {
   readonly label: string
 }) {
   const { freshness, label } = props
-  const asOf =
-    freshness.kind === "current" || freshness.kind === "unconfirmed" ? freshness.asOf : null
+  /*
+   * Every state that puts a value on screen carries an age, so the exclusion
+   * is the short list rather than the long one. Written the other way round —
+   * naming the states that *have* an age — it silently returned `null` for
+   * `checking` when that state was added, and the card said "hozirgina" about
+   * an hour-old balance. The test caught it; the shape is what let it happen.
+   */
+  const asOf = freshness.kind === "loading" || freshness.kind === "absent" ? null : freshness.asOf
   const seconds = useAgeSeconds(asOf)
 
   if (freshness.kind === "loading" || freshness.kind === "absent") return null
 
   const age = formatAge(seconds)
+
+  if (freshness.kind === "checking") {
+    return (
+      /*
+       * Secondary text, not the warning colour: this is old data on its way to
+       * being replaced, which is the ordinary way every cold start begins. The
+       * age is still stated, because it is still what is on screen.
+       */
+      <p className="m-0 text-step--1 text-(--color-text-secondary)">
+        <span className="sr-only">{label}: </span>
+        {age}gi ma&apos;lumot — yangilanmoqda
+      </p>
+    )
+  }
 
   if (freshness.kind === "current") {
     return (

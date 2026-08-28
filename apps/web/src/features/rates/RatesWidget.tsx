@@ -3,6 +3,7 @@ import { TrendingDown, TrendingUp } from "lucide-react"
 import { useEffect } from "react"
 import { Skeleton } from "../../components/Skeleton.js"
 import { reportError } from "../../lib/report.js"
+import { useCachedWrite } from "../../lib/useCachedQuery.js"
 import { useRatesQuery } from "./api.js"
 
 /**
@@ -59,7 +60,22 @@ function RateRow(props: { readonly rate: Rate }) {
 }
 
 export function RatesWidget() {
-  const { data, isLoading, isError, error } = useRatesQuery()
+  const query = useRatesQuery()
+  const { data, isLoading, isError, error } = query
+
+  /*
+   * FR-8.2 lists rates among the cached reads, and they are — but only for
+   * writing. The widget renders `data` from the query alone, because the value
+   * that matters here is the server's own `stale` flag (FR-7.2), and a record
+   * restored from IndexedDB has no honest answer for it: the flag describes
+   * whether the *server* could reach the central bank at the moment it
+   * answered, which says nothing about a copy sitting on this phone since
+   * Tuesday.
+   *
+   * Rendering the published date, which every record carries, is the honest
+   * substitute — and it is what the widget already shows.
+   */
+  useCachedWrite("rates", query)
 
   /*
    * Reported even though the user is told nothing.

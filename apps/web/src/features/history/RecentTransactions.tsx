@@ -1,10 +1,10 @@
-import { formatMoney, type HistoryItem } from "@wallet/shared"
+import { formatMoney, type HistoryItem, historyResponseSchema } from "@wallet/shared"
 import { ArrowDownLeft, ArrowUpRight, Clock, TriangleAlert } from "lucide-react"
 import { Link } from "react-router"
 import { FreshnessLine } from "../../components/Freshness.js"
 import { Skeleton } from "../../components/Skeleton.js"
 import { formatWhen } from "../../lib/datetime.js"
-import { freshnessOf, useOnline } from "../../lib/freshness.js"
+import { useCachedQuery } from "../../lib/useCachedQuery.js"
 import { RECENT_COUNT, useRecentTransfersQuery } from "./api.js"
 
 /**
@@ -89,9 +89,8 @@ function Row(props: { readonly item: HistoryItem }) {
 
 export function RecentTransactions() {
   const query = useRecentTransfersQuery()
-  const online = useOnline()
-  const freshness = freshnessOf(query, online)
-  const items = query.data?.items ?? []
+  const { data, freshness } = useCachedQuery("history:recent", historyResponseSchema, query)
+  const items = data?.items ?? []
 
   return (
     <section
@@ -140,7 +139,7 @@ export function RecentTransactions() {
         </p>
       ) : null}
 
-      {query.data && items.length === 0 ? (
+      {data && items.length === 0 ? (
         <p className="m-0 flex items-start gap-2xs text-step--1 text-(--color-text-secondary)">
           <Clock size={16} aria-hidden={true} className="mt-3xs shrink-0" />
           <span>

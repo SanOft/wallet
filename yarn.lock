@@ -3459,6 +3459,7 @@ __metadata:
     "@vitest/coverage-v8": "npm:4.1.11"
     "@wallet/shared": "workspace:^"
     axe-core: "npm:^4.13.0"
+    fake-indexeddb: "npm:^6.2.5"
     idb: "npm:^8.0.3"
     jsdom: "npm:^30.0.1"
     lucide-react: "npm:^1.34.0"
@@ -4805,6 +4806,13 @@ __metadata:
   version: 1.1.1
   resolution: "exsolve@npm:1.1.1"
   checksum: 10c0/0b157a7600408bd356ff78cff5ad9c8c0dd7ca5e7f246216c3c9b66196e76277d3130021122b9c5078a3462751fd7aa988fe3dc1e3b80c79cb873c1623f628e1
+  languageName: node
+  linkType: hard
+
+"fake-indexeddb@npm:^6.2.5":
+  version: 6.2.5
+  resolution: "fake-indexeddb@npm:6.2.5"
+  checksum: 10c0/6c5e2fe84a61daa06d7ad63699d1041fe61847f15f92db12415634b3db94f363a64be9e08a3c3c4434af9c3c0132086b85c4d5dc5e8e06edae1e7daf70ce1f3c
   languageName: node
   linkType: hard
 
