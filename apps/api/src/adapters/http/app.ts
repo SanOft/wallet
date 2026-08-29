@@ -142,7 +142,7 @@ export function createApp({
   app.use(express.json({ limit: "16kb" }))
 
   app.use(healthRouter(prisma))
-  app.use(authRouter({ auth, tokens, env }))
+  app.use(authRouter({ auth, tokens, env, prisma }))
   app.use(transferRouter({ transfers, tokens, prisma }))
   app.use(accountRouter({ prisma, transfers, tokens }))
   app.use(recipientRouter({ prisma, tokens, ...(nowFn ? { now: nowFn } : {}) }))

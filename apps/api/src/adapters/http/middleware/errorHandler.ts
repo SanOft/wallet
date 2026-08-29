@@ -43,6 +43,8 @@ const FALLBACK_MESSAGE: Record<ApiErrorCode, string> = {
   INSUFFICIENT_FUNDS: "Insufficient funds",
   LIMIT_EXCEEDED: "Transfer limit exceeded",
   IDEMPOTENCY_CONFLICT: "Idempotency key reused with a different payload",
+  STEP_UP_REQUIRED: "This amount requires the account password",
+  STEP_UP_FAILED: "The password did not match",
   PIN_NOT_SET: "PIN is not set",
   PIN_LOCKED: "PIN is locked",
   RATES_UNAVAILABLE: "Exchange rates are temporarily unavailable",

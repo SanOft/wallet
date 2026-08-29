@@ -63,7 +63,7 @@ export function buildApp(
   })
   const tokens = createTokenService(env)
   const auth = new AuthService({ prisma, tokens, pepper: env.JWT_SECRET })
-  const transfers = new TransferService({ prisma })
+  const transfers = new TransferService({ prisma, pepper: env.JWT_SECRET })
   const rates = new RatesService({ fetcher, store: new RatesRepository(prisma) })
 
   return {

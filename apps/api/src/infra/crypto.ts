@@ -112,6 +112,23 @@ export function hashRefreshToken(token: string): string {
  * the secret resets every counter, which is an acceptable — arguably desirable
  * — consequence.
  */
+/**
+ * The subject PIN attempts are counted against (FR-9.5).
+ *
+ * Keyed and domain-separated from `attemptSubject` by the prefix, so a wrong
+ * PIN can never move the login backoff and a wrong password can never move the
+ * PIN lock. They are different credentials guarding different channels, and
+ * one counter for both would let an attacker on the cheap channel lock the
+ * expensive one — or the reverse.
+ *
+ * Keyed on the user id rather than the phone: by the time a PIN is checked the
+ * user is already identified, so there is no membership question to protect
+ * and no reason to put a phone number through another hash.
+ */
+export function pinSubject(userId: string, secret: string): string {
+  return createHmac("sha256", secret).update(`ussd-pin:v1:${userId}`).digest("base64url")
+}
+
 export function attemptSubject(phone: string, secret: string): string {
   return createHmac("sha256", secret).update(`auth-attempt:v1:${phone}`).digest("base64url")
 }

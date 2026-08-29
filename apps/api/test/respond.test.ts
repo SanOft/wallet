@@ -44,16 +44,39 @@ const FULL_USER_ROW = {
 }
 
 describe("respond() strips what the schema does not name", () => {
-  it("drops a password hash handed to it on a full user row", async () => {
+  it("refuses a raw user row outright, rather than quietly trimming it", async () => {
     const res = await request(appReturning(FULL_USER_ROW)).get("/probe")
 
-    expect(res.status).toBe(200)
-    expect(res.body).toEqual({
+    /*
+     * This used to be a 200 with the extra columns stripped, and the change is
+     * a strengthening rather than a regression.
+     *
+     * `publicUserSchema` now carries `pinSet`, which is *derived* from
+     * `pinHash` and cannot be produced by trimming — so a database row no
+     * longer satisfies the contract at all, and handing one to `respond()` is
+     * a 500 with a logged cause instead of a response that happened to be
+     * safe. Silent trimming protected this route; a schema that cannot be
+     * satisfied by a raw row protects every route somebody writes next.
+     */
+    expect(res.status).toBe(500)
+    expect(JSON.stringify(res.body)).not.toContain("$argon2")
+  })
+
+  it("passes a mapped user through and carries no credential with it", async () => {
+    const mapped = {
       id: FULL_USER_ROW.id,
       phone: FULL_USER_ROW.phone,
       firstName: FULL_USER_ROW.firstName,
       lastName: FULL_USER_ROW.lastName,
-    })
+      pinSet: FULL_USER_ROW.pinHash !== null,
+    }
+
+    const res = await request(
+      appReturning({ ...mapped, passwordHash: FULL_USER_ROW.passwordHash }),
+    ).get("/probe")
+
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual(mapped)
 
     const wire = JSON.stringify(res.body)
     expect(wire).not.toContain("passwordHash")

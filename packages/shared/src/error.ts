@@ -29,6 +29,15 @@ export const apiErrorCodeSchema = z.enum([
   "INSUFFICIENT_FUNDS",
   "LIMIT_EXCEEDED",
   "IDEMPOTENCY_CONFLICT",
+  /*
+   * FR-2.8. Deliberately not 401, and the distinction is load-bearing: a 401
+   * on a transfer sends `baseQueryWithReauth` off to refresh the session and
+   * retry, so a mistyped step-up password would silently become a second
+   * transfer attempt. These are 422 — the request is understood, and something
+   * about it must change before it can succeed.
+   */
+  "STEP_UP_REQUIRED",
+  "STEP_UP_FAILED",
   "PIN_NOT_SET",
   "PIN_LOCKED",
   /*
@@ -113,6 +122,8 @@ export const API_ERROR_STATUS = {
   INSUFFICIENT_FUNDS: 422,
   LIMIT_EXCEEDED: 422,
   IDEMPOTENCY_CONFLICT: 409,
+  STEP_UP_REQUIRED: 422,
+  STEP_UP_FAILED: 422,
   PIN_NOT_SET: 422,
   PIN_LOCKED: 429,
   // 503, not 500: nothing here failed. Being >= 500 makes `isRetryable` true,

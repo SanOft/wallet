@@ -186,19 +186,41 @@ describe("request shapes reject what they do not name", () => {
     expect(topUpRequestSchema.safeParse({ amount: "999" }).success).toBe(false)
   })
 
-  it("the public user is exactly four fields", () => {
+  it("the public user is exactly the five fields it names", () => {
     const parsed = publicUserSchema.parse(
       Object.fromEntries([
         ["id", "u"],
         ["phone", "+998901234567"],
         ["firstName", "A"],
         ["lastName", "B"],
+        ["pinSet", false],
         ["passwordHash", "$argon2id$fixture"],
         ["role", "SYSTEM"],
       ]),
     )
-    expect(Object.keys(parsed).sort()).toEqual(["firstName", "id", "lastName", "phone"])
+    expect(Object.keys(parsed).sort()).toEqual(["firstName", "id", "lastName", "phone", "pinSet"])
     expect(JSON.stringify(parsed)).not.toContain("argon2")
+  })
+
+  it("will not accept a raw user row, because `pinSet` cannot be trimmed into existence", () => {
+    /*
+     * The strengthening that came with FR-1.6. `pinSet` is *derived* from
+     * `pinHash`, so a database row no longer satisfies this schema at all —
+     * which means nobody can hand one to `respond()` and get a response that
+     * merely happened to be safe. Stripping protected the routes that existed;
+     * a schema a row cannot satisfy protects the ones somebody writes next.
+     */
+    expect(() =>
+      publicUserSchema.parse(
+        Object.fromEntries([
+          ["id", "u"],
+          ["phone", "+998901234567"],
+          ["firstName", "A"],
+          ["lastName", "B"],
+          ["pinHash", "$argon2id$fixture"],
+        ]),
+      ),
+    ).toThrow()
   })
 
   it("a transfer response carries ISO 8601 dates (§12.2)", () => {

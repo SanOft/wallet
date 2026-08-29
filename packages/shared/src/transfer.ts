@@ -23,6 +23,16 @@ export const transferRequestSchema = z.strictObject({
   phone: phoneField,
   /** Minor units as a canonical decimal string; `moneySchema` parses it. */
   amount: moneySchema,
+  /**
+   * FR-2.8's step-up, present only above `STEP_UP_THRESHOLD`.
+   *
+   * Optional in the schema and mandatory in the service, which is the right
+   * way round: whether this transfer needs one depends on the amount, and a
+   * schema that could express "required when another field exceeds a
+   * constant" would still leave the server to check it. The rule lives once,
+   * where the money moves.
+   */
+  password: z.string().min(1, { error: "field.required" }).optional(),
 })
 export type TransferRequest = z.infer<typeof transferRequestSchema>
 
