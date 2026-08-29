@@ -32,12 +32,15 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v7
+      # Pinned by commit SHA, not by tag (P-5). This workflow holds the
+      # deploy hook and the production database URL, so a moved tag here is
+      # worth more to an attacker than the same tag in CI.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # The exact commit CI approved, not whatever main points at now.
           ref: ${{ github.event.workflow_run.head_sha }}
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
       - run: corepack enable
@@ -123,10 +126,10 @@ jobs:
     timeout-minutes: 10
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
       - run: corepack enable
