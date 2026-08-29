@@ -132,3 +132,18 @@ export function pinSubject(userId: string, secret: string): string {
 export function attemptSubject(phone: string, secret: string): string {
   return createHmac("sha256", secret).update(`auth-attempt:v1:${phone}`).digest("base64url")
 }
+
+/**
+ * The subject a *registration* attempt is counted against (P-13).
+ *
+ * Separated from `attemptSubject` by its prefix for the reason the comment on
+ * `pinSubject` already gives, and here the danger is sharper than a shared
+ * counter: registration is unauthenticated and anyone may name any number, so
+ * a shared subject would let an attacker lock a stranger out of *login* by
+ * repeatedly attempting to register their number. The recorded attempt exists
+ * to make a refused registration cost a durable write, and to be an audit
+ * trail; it must never reach FR-2.3's backoff.
+ */
+export function registrationSubject(phone: string, secret: string): string {
+  return createHmac("sha256", secret).update(`registration:v1:${phone}`).digest("base64url")
+}

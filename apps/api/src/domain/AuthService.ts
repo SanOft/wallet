@@ -8,6 +8,7 @@ import {
   hashRefreshToken,
   hashSecret,
   pinSubject,
+  registrationSubject,
   verifySecret,
 } from "../infra/crypto.js"
 import type { TokenService } from "../infra/jwt.js"
@@ -158,16 +159,57 @@ export class AuthService {
   /**
    * FR-1: a user and their UZS account are created together or not at all.
    *
-   * The uniqueness of `phone` is enforced by the database, and the failure is
-   * caught rather than pre-checked: a `SELECT` then `INSERT` has a window in
-   * which two concurrent registrations both see the number as free.
+   * **Both outcomes do one durable write (P-13).** FR-1.5 made the *body* of a
+   * refusal generic; it never made the work generic. A free number wrote a
+   * user, an account and a refresh token, a taken one failed on the first
+   * insert and rolled back, and the difference was readable: a ratio of 1.20
+   * over four runs and a single sample classifiable about 80% of the time —
+   * an oracle for exactly the question FR-1.5 exists to refuse.
+   *
+   * Equalising the *inserts* alone was tried first and measured, and it was not
+   * enough: the gap narrowed but the classifier did not move, because the
+   * dominant signal is the commit itself. Committing the discarded writes
+   * instead dropped a single sample to 53-60%, near chance, which is what
+   * identified durability rather than row count as the thing to match.
+   *
+   * So a refused registration now writes an `auth_attempt` and commits it. That
+   * is not ballast: an unauthenticated endpoint refusing to create an account
+   * is worth recording, and this is the table that records exactly that. It is
+   * counted against `registrationSubject`, never `attemptSubject`, so it cannot
+   * reach FR-2.3's backoff — otherwise anyone could lock a stranger out of
+   * login by repeatedly attempting to register their number.
+   *
+   * The session is issued inside the transaction for the same reason: two
+   * commits on the accepted path against one on the refused path would put the
+   * asymmetry straight back.
+   *
+   * The pre-check does not decide uniqueness — the database still does, and the
+   * catch below still handles the race in which two registrations both see a
+   * number as free. It exists so the two outcomes can be given the same work.
    */
   async register(input: RegisterRequest): Promise<Session> {
     const passwordHash = await hashSecret(input.password)
+    const subject = registrationSubject(input.phone, this.#pepper)
 
-    let user: UserRow
+    const existing = await this.#prisma.user.findUnique({
+      where: { phone: input.phone },
+      select: { id: true },
+    })
+
+    if (existing) {
+      /*
+       * Deliberately without `userId`. The attempt was made by whoever sent the
+       * request, who is not the account holder and may be attacking them;
+       * attaching it to the victim would file somebody else's action under
+       * their name.
+       */
+      await this.#prisma.authAttempt.create({ data: { subject, succeeded: false } })
+      throw new RegistrationFailedError()
+    }
+
+    let session: Session
     try {
-      user = await this.#prisma.$transaction(async (tx) => {
+      session = await this.#prisma.$transaction(async (tx) => {
         const created = await tx.user.create({
           data: {
             phone: input.phone,
@@ -184,7 +226,11 @@ export class AuthService {
           data: { userId: created.id, currency: DEFAULT_CURRENCY, type: "USER", balance: 0n },
         })
 
-        return created
+        await tx.authAttempt.create({
+          data: { userId: created.id, subject, succeeded: true },
+        })
+
+        return this.#issueSession(created, randomUUID(), tx)
       })
     } catch (error) {
       // FR-1.5 covers a *taken number*: that rejection is deliberately generic
@@ -199,7 +245,7 @@ export class AuthService {
       throw error
     }
 
-    return this.#issueSession(user, randomUUID())
+    return session
   }
 
   /**
