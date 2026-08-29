@@ -208,6 +208,42 @@ Then in `apps/api/.env`:
 container has nothing to protect, and requiring it would fail every job to fix
 a problem those jobs do not have.
 
+### Two accounts that survive a reseed
+
+`yarn workspace @wallet/api db:seed:demo` creates the pair used for
+demonstrating the product, and re-creates them after any `down -v`:
+
+| | |
+|---|---|
+| Sanjar Juraev | `+998884615500` |
+| Amina Jurayeva | `+998884625500` |
+| password | `orbit-walnut-lantern-quiet` |
+| USSD PIN | `1234` |
+
+Separate from `prisma/seed.ts`, which is infrastructure — the treasury, without
+which a top-up cannot balance — and is imported by the integration suite, so
+anything added there becomes rows every test starts with.
+
+Three properties worth keeping if this is ever edited:
+
+- **It goes through the domain services**, not through Prisma. Writing
+  `balance: 100_000_000n` onto an account would create money with no ledger
+  entries behind it and break I-4 at the next reconciliation, with nothing
+  saying where the drift came from. `sum(ledger) = 0` still holds after seeding,
+  which is the check worth re-running.
+- **It converges rather than skipping.** Each property — the user, the PIN, the
+  funding — is checked and repaired on its own. The first version skipped when
+  the row existed, and a run that failed between registration and `setPin` left
+  an account with no PIN and no money that every later run called done.
+- **It refuses to run with `NODE_ENV=production`.** Two named accounts with a
+  published password and PIN `1234` are exactly what must never reach a real
+  deployment.
+
+These accounts live in `wallet`, not `wallet_test`, which is the whole reason
+P-31's two-database split has to be set up before seeding them: with
+`TEST_DATABASE_URL` unset the suite truncates whatever `DATABASE_URL` points at,
+and "permanent" accounts last until the next `yarn test`.
+
 ### CI runs the same command
 
 `.github/workflows/ci.yml`:
