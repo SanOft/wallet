@@ -187,10 +187,13 @@ function limiter(options: {
   readonly max: number
   readonly message: string
   readonly skipPreflight?: boolean
+  /** Only failures count. See `loginRateLimit`. */
+  readonly skipSuccessful?: boolean
 }): RequestHandler {
   return rateLimit({
     windowMs: options.windowMs,
     limit: options.max,
+    ...(options.skipSuccessful ? { skipSuccessfulRequests: true } : {}),
     standardHeaders: "draft-7",
     legacyHeaders: false,
     keyGenerator: clientKey,
@@ -214,28 +217,75 @@ export function globalRateLimit(): RequestHandler {
 }
 
 /**
- * Registration and login, much tighter.
+ * Registration: a cap on how fast identities can be minted.
  *
- * Registration being unthrottled is what made FR-4.9's lookup cap
- * decorative: identities cost about 54 ms each, so an enumerator could mint
- * tens of thousands an hour and buy twenty lookups with every one. Capping
- * account creation is what gives the per-user counter something scarce to
- * count (P-20).
+ * Registration being unthrottled is what made FR-4.9's lookup cap decorative:
+ * identities cost about 54 ms each, so an enumerator could mint tens of
+ * thousands an hour and buy twenty lookups with every one. Capping account
+ * creation is what gives the per-user counter something scarce to count
+ * (P-20).
  *
- * It also mitigates the login bombardment §17.1 lists under denial of service,
- * which FR-2.3's per-account lockout would otherwise be alone in handling —
- * and that lockout is deferred to September (P-15).
+ * Every request counts here, successes included, which is the difference from
+ * `loginRateLimit` below. A *successful* registration is the thing being
+ * limited; skipping it would remove the control entirely.
  */
-export function authRateLimit(): RequestHandler {
+export function registerRateLimit(): RequestHandler {
   return limiter({
     windowMs: 15 * 60 * 1000,
     max: 20,
     message: "Too many authentication attempts",
-    // This budget bounds authentication *attempts*. A browser sends a preflight
-    // before every cross-origin JSON POST, so counting them would halve the
-    // real allowance to ten logins and make the number mean something other
-    // than FR-2.3 says. Preflights are not exempt from metering — the global
-    // limiter counts them.
+    // A browser sends a preflight before every cross-origin JSON POST, so
+    // counting them would halve the real allowance. Preflights are not exempt
+    // from metering — the global limiter counts them.
     skipPreflight: true,
+  })
+}
+
+/**
+ * Login: a cap on how fast passwords can be *guessed*, not on how often people
+ * sign in (P-25).
+ *
+ * The problem this solves is a market fact rather than a security one. Uzbek
+ * carriers put whole subscriber pools behind one address, so a per-IP budget of
+ * twenty per quarter hour is not twenty attempts by one person — it is twenty
+ * sign-ins for everybody on that NAT. That is an outage with a security
+ * rationale attached, and the people it stops are the customers.
+ *
+ * `skipSuccessfulRequests` is what separates the two populations, and it works
+ * because they differ in the one way that matters: **legitimate users mostly
+ * succeed and attackers mostly fail.** A subscriber who signs in correctly
+ * costs the shared address nothing at all, however many of them there are. A
+ * caller working through a password list spends the budget at full speed.
+ *
+ * P-25 proposed keying the budget on the phone number as well as the address.
+ * That is not done here, deliberately. Two reasons:
+ *
+ *   - The per-account dimension already exists. FR-2.3's backoff counts
+ *     consecutive failures against a keyed digest of the number, in the
+ *     database, and reaches a fifteen-minute delay quickly (P-15). Adding a
+ *     second per-account counter would be the same rule in two places, which
+ *     is what P-34 was about.
+ *   - Keying on `(address, number)` would give a spray attacker a *fresh*
+ *     budget for every account they try, which is precisely the attack the
+ *     address budget exists to bound. It would read as a tightening and be a
+ *     loosening.
+ *
+ * Fifty rather than twenty because these are now failures: on a shared address
+ * some mistyped passwords are ordinary, and fifty in a quarter hour is not.
+ * Together with the per-account backoff behind it, an attacker gets a bounded
+ * number of guesses spread thinly, each account slowing down as it is touched.
+ */
+export function loginRateLimit(): RequestHandler {
+  return limiter({
+    windowMs: 15 * 60 * 1000,
+    max: 50,
+    message: "Too many authentication attempts",
+    skipPreflight: true,
+    /*
+     * `< 400` is the library's definition of successful. A wrong password is
+     * 401, a locked-out caller 429, a malformed body 400 — all counted. Only a
+     * completed sign-in is free, which is the whole intent.
+     */
+    skipSuccessful: true,
   })
 }
