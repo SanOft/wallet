@@ -726,6 +726,7 @@ stateDiagram-v2
 | GET    | `/api/transfers?cursor=&from=&to=&direction=&status=&limit=` | History                                              | ✅                    | FR-5           |
 | GET    | `/api/rates`                                     | Exchange rates                                       | ✅                    | FR-7           |
 | POST   | `/api/channels/ussd`                             | USSD gateway callback                                | gateway secret header | FR-9           |
+| POST   | `/api/channels/ussd/simulate`                    | The same callback, dialled by the logged-in user     | ✅                    | FR-9.6         |
 | GET    | `/health`                                        | Service + DB status                                  | —                     | NFR-5          |
 
 ### 12.2 Conventions

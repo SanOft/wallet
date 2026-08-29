@@ -7,6 +7,7 @@ import type { RatesService } from "../../domain/RatesService.js"
 import type { TransferService } from "../../domain/TransferService.js"
 import type { TokenService } from "../../infra/jwt.js"
 import { type Logger, serializeError, serializeRequest } from "../../infra/logger.js"
+import { UssdAdapter } from "../ussd/UssdAdapter.js"
 import { createErrorHandler, notFoundHandler } from "./middleware/errorHandler.js"
 import { requestId } from "./middleware/requestId.js"
 import { accountRouter } from "./routes/accounts.js"
@@ -15,6 +16,7 @@ import { healthRouter } from "./routes/health.js"
 import { rateRouter } from "./routes/rates.js"
 import { recipientRouter } from "./routes/recipients.js"
 import { transferRouter } from "./routes/transfers.js"
+import { ussdRouter } from "./routes/ussd.js"
 import {
   authRateLimit,
   corsPolicy,
@@ -147,6 +149,25 @@ export function createApp({
   app.use(accountRouter({ prisma, transfers, tokens }))
   app.use(recipientRouter({ prisma, tokens, ...(nowFn ? { now: nowFn } : {}) }))
   app.use(rateRouter({ rates, tokens }))
+
+  /*
+   * FR-9. Built here rather than injected, because it holds FR-4.9's lookup
+   * window in memory and one app must own exactly one of those — the same
+   * reason `routes/recipients.ts` keeps its counter module-scoped.
+   *
+   * `warn` is where this channel's honesty lives: the adapter never throws, so
+   * a refusal or a bug would otherwise leave a phone screen with a sentence on
+   * it and the log with nothing at all.
+   */
+  const ussd = new UssdAdapter({
+    prisma,
+    auth,
+    transfers,
+    warn: (event, cause) => log.error({ event, err: cause }, "ussd"),
+    ...(nowFn ? { now: () => new Date(nowFn()) } : {}),
+  })
+
+  app.use(ussdRouter({ ussd, tokens, prisma, gatewaySecret: env.USSD_GATEWAY_SECRET }))
 
   app.use(notFoundHandler)
 
