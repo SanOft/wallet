@@ -40,6 +40,11 @@ describe.skipIf(!hasDatabase)("GET /health (runbook T-2.5)", () => {
       // to tell the old instance from the new one, which is what lets it wait
       // for a deploy without a Render API token.
       version: expect.any(String),
+      // How many proxies this request passed through, and how many the process
+      // is told to believe (P-11). The count only, never the addresses — this
+      // endpoint is unauthenticated.
+      proxyChain: expect.any(Number),
+      trustedHops: expect.any(Number),
     })
   })
 
@@ -75,6 +80,12 @@ describe.skipIf(!hasDatabase)("GET /health (runbook T-2.5)", () => {
         // able to tell "the new build is up but unhealthy" from "the old build
         // is still answering", and those need different responses.
         version: expect.any(String),
+        // Reported on the degraded branch too. A deployment whose proxy chain
+        // is wrong and whose database is also down is exactly when somebody is
+        // reading this, and withholding it there would hide it when it is most
+        // wanted (P-11).
+        proxyChain: expect.any(Number),
+        trustedHops: expect.any(Number),
       })
     } finally {
       await broken.$disconnect().catch(() => undefined)
