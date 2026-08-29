@@ -24,6 +24,7 @@ one most often needed.
 | [0008](0008-frontend-architecture.md) | Frontend architecture | Proposed |
 | [0009](0009-api-behind-the-web-origin.md) | The API is served through the web origin, not beside it | Accepted — day 6 |
 | [0010](0010-pin-before-any-ussd-disclosure.md) | The PIN comes before any USSD disclosure, not only before a transfer | Accepted — B6 |
+| [0011](0011-cards-are-instruments-not-balances.md) | A card is a payment instrument, not a balance | Proposed |
 
 **Accepted** means the code does this today. **Proposed** means the decision is
 recorded before the work, so the reasoning is available when it starts — and so
