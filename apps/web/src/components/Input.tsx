@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes } from "react"
+import type { ComponentPropsWithRef } from "react"
 
 /**
  * The one text input every other field is built from.
@@ -13,7 +13,13 @@ import type { InputHTMLAttributes } from "react"
  * 360px screen lands inside the field and not next to it (NFR-3).
  */
 
-export type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "className" | "style"> & {
+/**
+ * `ComponentPropsWithRef` rather than `InputHTMLAttributes`, so a caller can
+ * hold the element. F7's simulator needs it: after a reply lands the caret
+ * belongs in the field where the next digit goes, and a page that leaves focus
+ * on a button the user has already pressed makes them hunt for it every turn.
+ */
+export type InputProps = Omit<ComponentPropsWithRef<"input">, "className" | "style"> & {
   readonly invalid?: boolean
 }
 

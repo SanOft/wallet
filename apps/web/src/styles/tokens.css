@@ -88,6 +88,13 @@
 
   /* §13.2.4 */
   --font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Every face here already ships with an operating system, so this costs no
+   * bytes on NFR-3's connection. Used by F7's phone screen, where a USSD
+   * message has to be read the way a handset lays it out — one column, one
+   * character cell per character — because the 182-septet budget it is
+   * measured against is counted in exactly those cells. */
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --radius-card: 12px;
   --radius-control: 8px;
 }

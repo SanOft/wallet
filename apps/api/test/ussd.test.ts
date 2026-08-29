@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto"
 import type { PrismaClient } from "@prisma/client"
-import { CHANNEL_LIMITS, STEP_UP_THRESHOLD, USSD_MAX_SEPTETS } from "@wallet/shared"
+import { CHANNEL_LIMITS, gsm7Septets, STEP_UP_THRESHOLD, USSD_MAX_SEPTETS } from "@wallet/shared"
 import request from "supertest"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
-import { gsm7Septets, toGsm7 } from "../src/adapters/ussd/gsm7.js"
 import { resolveStep, segmentsOf } from "../src/adapters/ussd/steps.js"
 import { UssdAdapter } from "../src/adapters/ussd/UssdAdapter.js"
 import { SlidingWindow } from "../src/adapters/ussd/window.js"
@@ -80,38 +79,6 @@ describe("the session parser (FR-9.2)", () => {
     expect(resolveStep("9")).toEqual({ kind: "unknown" })
     expect(resolveStep("1*1234*5")).toEqual({ kind: "unknown" })
     expect(resolveStep("2*901234567*50000*1234*9")).toEqual({ kind: "unknown" })
-  })
-})
-
-describe("the GSM 7-bit alphabet (3GPP TS 23.038)", () => {
-  it("transliterates a name it cannot spell rather than replacing it", () => {
-    /*
-     * `nameSchema` accepts "Иван" and "Gʻafur" by name. Passed through
-     * unchanged, either one turns the message into UCS-2 and the 182-septet
-     * budget becomes 70 — so the confirmation screen is cut in the middle of
-     * the recipient's name. Replaced with `?`, the sender cannot tell who they
-     * are paying, which is the entire point of showing it.
-     */
-    expect(toGsm7("ИВАН И.")).toBe("IVAN I.")
-    expect(toGsm7("Gʻafur")).toBe("G'afur")
-    expect(gsm7Septets(toGsm7("ИВАН И."))).not.toBeNull()
-  })
-
-  it("counts an escaped character as the two septets it costs", () => {
-    // `text.length` is not the budget: 182 square brackets is 364 septets and
-    // arrives cut in half.
-    expect(gsm7Septets("[")).toBe(2)
-    expect(gsm7Septets("A")).toBe(1)
-  })
-
-  it("reports that a string cannot be measured rather than measuring it as zero", () => {
-    expect(gsm7Septets("И")).toBeNull()
-  })
-
-  it("keeps an unrepresentable character visible instead of dropping it", () => {
-    // Dropping produces a different, plausible-looking name. A `?` says that
-    // something was lost.
-    expect(toGsm7("你好")).toBe("??")
   })
 })
 
