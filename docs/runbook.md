@@ -141,13 +141,30 @@ tomorrow, taken from `rates.test.ts`, for hours — and the accumulation is not
 theoretical either: 3 440 accounts and 2 101 transfers made the I-4 invariant
 check time out until it was rewritten as one aggregate.
 
-Locally, keep two:
+Locally, keep two. `docker-compose.yml` creates both, on the image CI uses:
 
 ```bash
-# once
-createdb wallet_test
-TEST_DATABASE_URL="postgresql://.../wallet_test"   yarn workspace @wallet/api exec prisma migrate deploy
+docker compose up -d --wait                              # postgres 17 on 5434
+yarn workspace @wallet/api exec prisma migrate deploy
 ```
+
+`--wait` returns only once the healthcheck passes, so the migration cannot
+race the server's startup. `docker compose down` stops it and keeps the data;
+`down -v` throws the data away, which is the way back to a clean cluster.
+
+This file exists because for most of the project it did not. The tests ran
+against a container typed out by hand months earlier and recorded nowhere, and
+the morning it stopped binding there was nothing to recreate it from — `yarn
+verify` could be run in CI and nowhere else. A test database that lives on one
+laptop and in nobody's repository is a single point of failure with no error
+message.
+
+**If it will not bind on Windows**, and the daemon says only `An attempt was
+made to access a socket in a way forbidden by its access permissions`, the
+port is inside a block Windows reserves for Hyper-V and WinNAT. Those blocks
+move. `netsh int ipv4 show excludedportrange protocol=tcp` lists them; ports
+below 49152 are never in one, which is why this stack sits on 5434 rather than
+on the 55432 it used to.
 
 Then in `apps/api/.env`:
 

@@ -1,0 +1,12 @@
+-- The second database P-31 asks for, created at cluster init so that bringing
+-- the stack up is one command and needs no `psql` on the host PATH.
+--
+-- Two databases rather than one because the integration suites write and clean
+-- nothing up. Pointed at the development database they leak into it: the rates
+-- widget once served a fixture dated tomorrow to a real session for hours, and
+-- 3 440 leftover accounts made the I-4 invariant check time out.
+--
+-- Runs only on an empty data volume. On an existing one the entrypoint skips
+-- this directory entirely, which is why it is written to be created once and
+-- never migrated.
+CREATE DATABASE wallet_test OWNER wallet;
