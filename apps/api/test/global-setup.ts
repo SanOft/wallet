@@ -50,9 +50,40 @@ export async function setup(): Promise<void> {
     // Environment supplies the variables, or the branch below handles it.
   }
 
-  const url = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL
+  /*
+   * `TEST_DATABASE_URL` only. This deliberately does **not** fall back to
+   * `DATABASE_URL`, and the fallback is what a security review caught here.
+   *
+   * This function truncates every table it finds. Reached through the
+   * fallback, that is a `yarn test` that wipes whichever database the
+   * development server is pointed at — which on this very machine held a real
+   * account with a balance and three transfers. The suites still fall back for
+   * *reading* (`test/setup.ts`, P-31, and CI depends on it), because reading a
+   * shared database is untidy and destroying one is not the same kind of
+   * mistake.
+   *
+   * So: a database nobody explicitly nominated as the test database is never
+   * truncated, and the run says why rather than appearing to have reset
+   * something.
+   */
+  const url = process.env.TEST_DATABASE_URL
+  const fallback = process.env.DATABASE_URL
 
   if (!url) {
+    /*
+     * A database exists, but not one nominated for tests. The suites will run
+     * against it — `test/setup.ts` falls back, and CI relies on that — and
+     * nothing here will delete anything.
+     */
+    if (fallback) {
+      console.warn(
+        "\n  NOT resetting the database: TEST_DATABASE_URL is unset, so the suites are sharing" +
+          "\n  DATABASE_URL and rows will accumulate (P-31). Nothing is truncated without an" +
+          "\n  explicit test database, because that database may not be a throwaway.\n",
+      )
+      return
+    }
+
     /*
      * The whole point of the fail-closed half. `CI` is set by GitHub Actions
      * on every runner, so this cannot fire on a developer machine that simply
@@ -100,6 +131,25 @@ export async function setup(): Promise<void> {
      * acceptable here and only here: this connection points at the throwaway
      * test database, never at the one the API runs against.
      */
+    /*
+     * Checked against the connection rather than against the environment
+     * variable, because the variable is the thing that would be wrong.
+     * `current_database()` is what is actually about to be emptied.
+     */
+    const { rows: identity } = await client.query<{ name: string }>(
+      "select current_database() as name",
+    )
+    const name = identity[0]?.name ?? ""
+    if (!/test/i.test(name)) {
+      throw new Error(
+        `refusing to truncate "${name}": TEST_DATABASE_URL does not name a test database. ` +
+          "Rename it, or point it at one — this statement deletes every row it finds.",
+      )
+    }
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("refusing to truncate anything with NODE_ENV=production")
+    }
+
     await client.query("begin")
     await client.query("set local session_replication_role = 'replica'")
     await client.query(
