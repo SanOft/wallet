@@ -3,6 +3,7 @@ import { ArrowLeft, TriangleAlert } from "lucide-react"
 import { Link, useParams } from "react-router"
 import { Skeleton } from "../components/Skeleton.js"
 import { useOneTransferQuery } from "../features/history/api.js"
+import { amountTone } from "../lib/amountTone.js"
 import { formatWhen } from "../lib/datetime.js"
 
 /**
@@ -66,7 +67,10 @@ export function TransferDetail() {
           <p
             className="tabular m-0 text-step-4"
             style={{
-              color: item.direction === "incoming" ? "var(--color-success)" : "var(--color-text)",
+              color: amountTone(item.direction, item.status).colour,
+              textDecoration: amountTone(item.direction, item.status).struck
+                ? "line-through"
+                : undefined,
             }}
           >
             <span aria-hidden="true">{item.direction === "incoming" ? "+ " : "− "}</span>

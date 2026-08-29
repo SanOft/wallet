@@ -240,7 +240,7 @@ export function UssdSimulator() {
           <button
             type="submit"
             disabled={input === "" || isLoading || !online}
-            className="flex items-center justify-center gap-2xs rounded-(--radius-control) px-s text-(--color-on-primary) disabled:opacity-50"
+            className="flex items-center justify-center gap-2xs rounded-(--radius-control) px-s text-(--color-on-primary)"
             style={{ minHeight: "var(--touch-target-min)", background: "var(--color-primary)" }}
           >
             <PhoneCall size={18} aria-hidden={true} />
@@ -274,7 +274,7 @@ export function UssdSimulator() {
               type="button"
               onClick={() => void retry()}
               disabled={isLoading || !online}
-              className="flex items-center justify-center gap-2xs rounded-(--radius-control) px-s text-(--color-on-primary) disabled:opacity-50"
+              className="flex items-center justify-center gap-2xs rounded-(--radius-control) px-s text-(--color-on-primary)"
               style={{ minHeight: "var(--touch-target-min)", background: "var(--color-primary)" }}
             >
               <RotateCcw size={18} aria-hidden={true} />
@@ -286,7 +286,7 @@ export function UssdSimulator() {
             type="button"
             onClick={() => void startCall()}
             disabled={isLoading || !online}
-            className="flex items-center justify-center gap-2xs rounded-(--radius-control) border px-s disabled:opacity-50"
+            className="flex items-center justify-center gap-2xs rounded-(--radius-control) border px-s"
             style={{ minHeight: "var(--touch-target-min)", borderColor: "var(--color-neutral)" }}
           >
             <PhoneCall size={18} aria-hidden={true} />

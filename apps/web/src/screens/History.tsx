@@ -4,6 +4,7 @@ import { useState } from "react"
 import { Link, useSearchParams } from "react-router"
 import { Skeleton } from "../components/Skeleton.js"
 import { type HistoryFilters, useTransferPageQuery } from "../features/history/api.js"
+import { amountTone } from "../lib/amountTone.js"
 import { formatWhen } from "../lib/datetime.js"
 
 /**
@@ -43,6 +44,7 @@ function Row(props: { readonly item: HistoryItem }) {
   const { item } = props
   const incoming = item.direction === "incoming"
   const Arrow = incoming ? ArrowDownLeft : ArrowUpRight
+  const tone = amountTone(item.direction, item.status)
 
   return (
     <li>
@@ -51,12 +53,7 @@ function Row(props: { readonly item: HistoryItem }) {
         className="flex items-center gap-s py-2xs no-underline"
         style={{ color: "inherit" }}
       >
-        <Arrow
-          size={20}
-          aria-hidden={true}
-          className="shrink-0"
-          style={{ color: incoming ? "var(--color-success)" : "var(--color-text-secondary)" }}
-        />
+        <Arrow size={20} aria-hidden={true} className="shrink-0" style={{ color: tone.colour }} />
 
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-step-0">
@@ -74,10 +71,13 @@ function Row(props: { readonly item: HistoryItem }) {
 
         <span
           className="tabular shrink-0 text-step-0"
-          style={{ color: incoming ? "var(--color-success)" : "var(--color-text)" }}
+          style={{
+            color: tone.colour,
+            textDecoration: tone.struck ? "line-through" : undefined,
+          }}
         >
-          <span aria-hidden="true">{incoming ? "+ " : "− "}</span>
-          <span className="sr-only">{incoming ? "kirim " : "chiqim "}</span>
+          <span aria-hidden="true">{tone.sign}</span>
+          <span className="sr-only">{tone.label}</span>
           {formatMoney(BigInt(item.amount), "UZS")}
         </span>
       </Link>

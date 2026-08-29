@@ -74,7 +74,7 @@ export function Keypad(props: {
           disabled={props.disabled}
           onClick={() => props.onKey(key)}
           aria-label={SPOKEN[key]}
-          className="rounded-(--radius-control) border text-step-1 disabled:opacity-50"
+          className="rounded-(--radius-control) border text-step-1"
           style={{
             minHeight: "var(--touch-target-min)",
             borderColor: "var(--color-neutral)",
@@ -89,7 +89,7 @@ export function Keypad(props: {
         type="button"
         disabled={props.disabled}
         onClick={props.onBackspace}
-        className="flex items-center justify-center gap-2xs rounded-(--radius-control) border text-step--1 disabled:opacity-50"
+        className="flex items-center justify-center gap-2xs rounded-(--radius-control) border text-step--1"
         style={{
           gridColumn: "span 3",
           minHeight: "var(--touch-target-min)",
