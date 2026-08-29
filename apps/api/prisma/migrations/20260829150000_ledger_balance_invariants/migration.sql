@@ -22,12 +22,13 @@
 -- well defined. A self-transfer is not forbidden anywhere, which is exactly
 -- the case that would tie. A sequence is assigned per INSERT and settles it.
 
-ALTER TABLE "ledger_entries" ADD COLUMN "seq" BIGSERIAL NOT NULL;
+ALTER TABLE "ledger_entries" ADD COLUMN IF NOT EXISTS "seq" BIGSERIAL NOT NULL;
 
-CREATE UNIQUE INDEX "ledger_entries_seq_key" ON "ledger_entries"("seq");
+CREATE UNIQUE INDEX IF NOT EXISTS "ledger_entries_seq_key" ON "ledger_entries"("seq");
 
 -- The lookup the check performs: newest entry for one account, O(1).
-CREATE INDEX "ledger_entries_account_seq_idx" ON "ledger_entries"("accountId", "seq" DESC);
+CREATE INDEX IF NOT EXISTS "ledger_entries_account_seq_idx"
+  ON "ledger_entries"("accountId", "seq" DESC);
 
 -- ---------------------------------------------------------------------------
 -- One-time repair, so the checks below can be true of existing rows
@@ -39,17 +40,46 @@ CREATE INDEX "ledger_entries_account_seq_idx" ON "ledger_entries"("accountId", "
 --
 -- It needs the append-only trigger suspended, which deserves saying out loud
 -- rather than hiding: `ledger_entries` rejects UPDATE precisely so that nothing
--- can do this at runtime. A migration running as the schema owner is the one
+-- can do this at runtime. A migration running as the table's owner is the one
 -- context where it is allowed, it happens once, and after it the trigger added
 -- below makes the column impossible to drift again.
+--
+-- Suspended by ownership (`DISABLE TRIGGER USER`) rather than by
+-- `session_replication_role`, which needs superuser. The first version used the
+-- session parameter, passed locally and in CI — both superuser — and failed on
+-- the deployed Neon database, which is neither. The privilege this needs is now
+-- the one a migration is entitled to.
 --
 -- Both statements report what they changed. A repair that silently rewrites
 -- money columns is not something anybody should discover later from a diff.
 
 DO $$
-DECLARE repaired_entries INT; repaired_accounts INT;
+DECLARE repaired_entries INT; repaired_accounts INT; needs_repair INT;
 BEGIN
-  SET LOCAL session_replication_role = 'replica';
+  SELECT count(*) INTO needs_repair FROM (
+    SELECT 1 FROM (
+      SELECT "balanceAfter",
+             SUM("amount") OVER (PARTITION BY "accountId" ORDER BY "seq"
+                                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running
+        FROM "ledger_entries"
+    ) x WHERE "balanceAfter" <> running
+  ) y;
+
+  -- `DISABLE TRIGGER USER`, not `session_replication_role`.
+  --
+  -- The first version of this migration used the session parameter, which
+  -- needs superuser, and the deployed database is Neon — where the role is
+  -- not one. It failed with `permission denied to set parameter
+  -- "session_replication_role"` and blocked every later migration behind
+  -- P3009. Ownership of the table is enough for `DISABLE TRIGGER USER`, and
+  -- ownership is what a migration role legitimately has.
+  --
+  -- Guarded on there being something to repair, so the common case — a
+  -- database whose chain is already correct — never takes the ACCESS
+  -- EXCLUSIVE lock at all.
+  IF needs_repair > 0 THEN
+    ALTER TABLE "ledger_entries" DISABLE TRIGGER USER;
+  END IF;
 
   WITH ordered AS (
     SELECT "id",
@@ -62,6 +92,10 @@ BEGIN
     FROM ordered o
    WHERE o."id" = le."id" AND le."balanceAfter" <> o.running;
   GET DIAGNOSTICS repaired_entries = ROW_COUNT;
+
+  IF needs_repair > 0 THEN
+    ALTER TABLE "ledger_entries" ENABLE TRIGGER USER;
+  END IF;
 
   UPDATE "accounts" a
      SET "balance" = COALESCE((SELECT SUM(le."amount") FROM "ledger_entries" le

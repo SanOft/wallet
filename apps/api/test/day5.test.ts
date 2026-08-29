@@ -6,14 +6,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
 import { isHealthy, reconcile } from "../src/infra/reconciliation.js"
-import { buildApp, testEnv } from "./helpers.js"
+import { buildApp, testEnv, uniquePhone } from "./helpers.js"
 
 const hasDatabase = Boolean(process.env.DATABASE_URL)
 const PASSWORD = ["orbit", "walnut", "lantern", "quiet"].join("-")
-
-function uniquePhone(): string {
-  return `+99894${Math.floor(1_000_000 + Math.random() * 8_999_999)}`
-}
 
 describe.skipIf(!hasDatabase)("day 5 — top-up, accounts and lookup", () => {
   let prisma: PrismaClient

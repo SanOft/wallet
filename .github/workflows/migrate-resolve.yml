@@ -1,0 +1,66 @@
+name: Resolve a failed migration
+
+# Manual only, and deliberately so.
+#
+# `prisma migrate deploy` refuses to apply anything once a migration has failed
+# against the target database (P3009), which is the correct behaviour: the
+# schema is in a state nobody planned and guessing is worse than stopping.
+# Clearing that record is a decision about production, so it is a button a
+# person presses, never a step that runs on push. A deploy pipeline that
+# silently resolved its own failures would turn a blocked deploy into a
+# corrupted one.
+on:
+  workflow_dispatch:
+    inputs:
+      migration:
+        description: The migration directory name, exactly as it appears in prisma/migrations
+        required: true
+      outcome:
+        description: >-
+          rolled-back if the failed migration left nothing behind (Prisma runs each
+          migration in a transaction, so this is the usual answer); applied only if
+          you have checked the schema by hand and it is already in the target state.
+        required: true
+        type: choice
+        options: [rolled-back, applied]
+        default: rolled-back
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: yarn install --immutable
+
+      - name: resolve
+        working-directory: apps/api
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+          MIGRATION: ${{ inputs.migration }}
+          OUTCOME: ${{ inputs.outcome }}
+        run: |
+          echo "resolving $MIGRATION as $OUTCOME"
+          yarn prisma migrate resolve "--$OUTCOME" "$MIGRATION"
+
+      # Says what the database now believes, so the run is evidence rather than
+      # an assertion that it worked.
+      - name: remaining state
+        working-directory: apps/api
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL_UNPOOLED: ${{ secrets.DATABASE_URL_UNPOOLED }}
+        run: yarn prisma migrate status || true

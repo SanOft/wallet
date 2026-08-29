@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
 import { isHealthy, reconcile } from "../src/infra/reconciliation.js"
-import { testEnv } from "./helpers.js"
+import { testEnv, uniquePhone } from "./helpers.js"
 
 /**
  * I-4 and the `balanceAfter` chain, enforced at COMMIT rather than reported
@@ -43,7 +43,7 @@ describe.skipIf(!hasDatabase)("the ledger's snapshot and its journal", () => {
   async function account(balance: bigint): Promise<string> {
     const user = await prisma.user.create({
       data: {
-        phone: `+99893${Math.floor(1_000_000 + Math.random() * 8_999_999)}`,
+        phone: uniquePhone(),
         firstName: "Ledger",
         lastName: "Fixture",
         passwordHash: "!fixture-cannot-authenticate!",
