@@ -13,6 +13,24 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().max(65535).default(3000),
 
   /**
+   * How many proxies in front of this process may be believed (P-11).
+   *
+   * Configuration rather than a constant, because the right value is a fact
+   * about the deployment and not about the code. ADR-0009 put a second proxy
+   * in front of the first, and the count that was compiled in had been chosen
+   * for the chain before it — so correcting it used to mean a code change and
+   * a deploy, for a number that is only knowable *from* the deployment.
+   *
+   * Express counts hops from the right, nearest this process, and one too few
+   * does not fail loudly: `req.ip` silently becomes a proxy's own address, and
+   * since every rate limit keys on it, every caller lands in one bucket. One
+   * too many is the opposite failure — a forged `X-Forwarded-For`, believed.
+   * `/health` reports the depth it actually observes so the value can be read
+   * off a deployment rather than guessed at.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(1),
+
+  /**
    * Neon connection string (§20.2). The scheme is checked here because a
    * typo like `postgres:/host` otherwise boots cleanly and fails at the first
    * query — which is the failure mode this whole module exists to prevent.

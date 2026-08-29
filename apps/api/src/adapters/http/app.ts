@@ -85,7 +85,7 @@ export function createApp({
   // on any deployment reachable without passing through the load balancer —
   // `req.ip` and `req.secure` are client-controlled, because the single hop
   // this trusts is then the client itself.
-  app.set("trust proxy", 1)
+  app.set("trust proxy", env.TRUST_PROXY_HOPS)
   app.disable("x-powered-by")
 
   // Before anything that reads the request: the headers belong on every
@@ -164,7 +164,7 @@ export function createApp({
 
   app.use(express.json({ limit: "16kb" }))
 
-  app.use(healthRouter(prisma))
+  app.use(healthRouter(prisma, env.TRUST_PROXY_HOPS))
   app.use(authRouter({ auth, tokens, env, prisma }))
   app.use(transferRouter({ transfers, tokens, prisma }))
   app.use(accountRouter({ prisma, accounts, transfers, tokens }))

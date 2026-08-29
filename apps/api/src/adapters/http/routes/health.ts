@@ -14,6 +14,30 @@ const healthSchema = z.strictObject({
   db: z.enum(["up", "down"]),
   migration: z.string().nullable(),
   version: z.string(),
+  /**
+   * How many `X-Forwarded-For` entries this request arrived with (P-11).
+   *
+   * The count, never the addresses. It is here because the correct
+   * `TRUST_PROXY_HOPS` is a fact about the deployment that cannot be learned
+   * from the code, and the alternative was to wait for a bespoke production
+   * measurement. The deploy smoke already calls `/health`, so this number lands
+   * in the deploy log on its own.
+   *
+   * **Only meaningful on a request that sent no `X-Forwarded-For` of its own.**
+   * The header grows by one per proxy and a caller may seed it, so a forged
+   * entry makes the chain read one longer than it is — and setting the trusted
+   * count to that inflated number is the failure where a forged address is
+   * believed, which is worse than the one this is here to find. The deploy
+   * smoke sends no such header, which is why it is the thing that reads this.
+   *
+   * Zero means no proxy set the header, which is what a direct request looks
+   * like — locally, or anywhere reachable without passing the load balancer.
+   * That is the case where `req.ip` is client-controlled regardless of the
+   * setting, which the comment on `trust proxy` already warns about.
+   */
+  proxyChain: z.number().int().min(0),
+  /** What the process is configured to believe, so the two can be compared. */
+  trustedHops: z.number().int().min(0),
 })
 
 /**
@@ -42,11 +66,21 @@ const VERSION = process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? "unkn
  * Unauthenticated by design (§12.1), so it deliberately exposes nothing beyond
  * reachability — no connection string, no driver message, no row counts.
  */
-export function healthRouter(prisma: PrismaClient): Router {
+/**
+ * The number of hops the header claims. Split on commas rather than trusting
+ * `req.ips`, whose length already depends on the very setting being diagnosed.
+ */
+function observedChainDepth(header: string | undefined): number {
+  if (!header) return 0
+  return header.split(",").filter((part) => part.trim().length > 0).length
+}
+
+export function healthRouter(prisma: PrismaClient, trustedHops: number): Router {
   const router = Router()
 
-  router.get("/health", async (_req, res) => {
+  router.get("/health", async (req, res) => {
     const db = await checkDatabase(prisma)
+    const proxyChain = observedChainDepth(req.get("x-forwarded-for"))
 
     if (!db.ok) {
       respond(res, 503, healthSchema, {
@@ -54,6 +88,8 @@ export function healthRouter(prisma: PrismaClient): Router {
         db: "down",
         migration: null,
         version: VERSION,
+        proxyChain,
+        trustedHops,
       })
       return
     }
@@ -63,6 +99,8 @@ export function healthRouter(prisma: PrismaClient): Router {
       db: "up",
       migration: db.migration,
       version: VERSION,
+      proxyChain,
+      trustedHops,
     })
   })
 

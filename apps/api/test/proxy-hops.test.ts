@@ -39,15 +39,68 @@ async function resolvedIp(trust: number, forwardedFor: string): Promise<string> 
 }
 
 describe("how many proxies the API believes are in front of it", () => {
-  it("sets one hop, which is the number production has to confirm", () => {
-    const { app } = buildApp(PRISMA_STUB, { ...process.env })
+  it("defaults to one hop, and takes the count from configuration", () => {
+    const fallback = buildApp(PRISMA_STUB, { ...process.env })
+    expect(fallback.app.get("trust proxy")).toBe(1)
 
     /*
-     * Pinned so the value cannot drift silently. It is deliberately not
-     * asserted as *correct*: whether one is right depends on the deployed
-     * chain, and the table below is what says what changing it would mean.
+     * Configuration rather than a constant, because the right value is a fact
+     * about the deployment. Correcting it used to mean a code change and a
+     * deploy, for a number only knowable *from* a deployment.
      */
-    expect(app.get("trust proxy")).toBe(1)
+    const behindTwo = buildApp(PRISMA_STUB, { ...process.env, TRUST_PROXY_HOPS: "2" })
+    expect(behindTwo.app.get("trust proxy")).toBe(2)
+  })
+
+  it("reports the chain it actually saw, so the right count can be read off a deploy", async () => {
+    /*
+     * The half that could not be settled here: how many proxies production has.
+     * `/health` now answers it, and the deploy smoke already calls `/health`,
+     * so the number lands in the deploy log without anyone running anything.
+     *
+     * The count only — never the addresses. `/health` is unauthenticated.
+     */
+    const { app } = buildApp(PRISMA_STUB, { ...process.env })
+
+    const direct = await request(app).get("/health")
+    expect(direct.body.proxyChain, "no header means nothing set one").toBe(0)
+    expect(direct.body.trustedHops).toBe(1)
+
+    const behindTwo = await request(app).get("/health").set("x-forwarded-for", `${CLIENT}, ${CDN}`)
+    expect(behindTwo.body.proxyChain, "two entries, so two hops to believe").toBe(2)
+
+    const three = await request(app)
+      .get("/health")
+      .set("x-forwarded-for", `${CLIENT}, ${CDN}, ${BALANCER}`)
+    expect(three.body.proxyChain).toBe(3)
+
+    // No address escapes, which is the one thing an unauthenticated endpoint
+    // must not do with this header.
+    expect(JSON.stringify(three.body)).not.toContain(CLIENT)
+  })
+
+  it("counts a forged entry too, which is why only the smoke may act on it", async () => {
+    /*
+     * The trap in reporting this at all. `X-Forwarded-For` grows by one per
+     * proxy *and* a caller may seed it, so a forged first entry makes the
+     * chain read one longer than it is. An operator who set the trusted count
+     * to a number read off an attacker's request would trust a forged address
+     * — the failure this whole exercise exists to avoid, arrived at through
+     * the tool meant to prevent it.
+     *
+     * The number is not sanitised, because it cannot be: from inside the
+     * process a seeded entry is indistinguishable from a proxy's. What makes
+     * it safe is the reader — the deploy smoke sends no header of its own, so
+     * every entry it sees was added by a proxy. This pins the hazard so the
+     * qualification cannot be dropped from the comments without a test going
+     * red.
+     */
+    const { app } = buildApp(PRISMA_STUB, { ...process.env })
+
+    const honest = await request(app).get("/health").set("x-forwarded-for", CDN)
+    const forged = await request(app).get("/health").set("x-forwarded-for", `1.2.3.4, ${CDN}`)
+
+    expect(forged.body.proxyChain).toBe(honest.body.proxyChain + 1)
   })
 
   it.each([
