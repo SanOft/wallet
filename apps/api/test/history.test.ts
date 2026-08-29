@@ -5,7 +5,7 @@ import request from "supertest"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
-import { buildApp, testEnv } from "./helpers.js"
+import { buildApp, testEnv, uniquePhone } from "./helpers.js"
 
 /**
  * `GET /api/transfers` — FR-5.
@@ -19,10 +19,6 @@ import { buildApp, testEnv } from "./helpers.js"
 
 const hasDatabase = Boolean(process.env.DATABASE_URL)
 const PASSWORD = ["orbit", "walnut", "lantern", "quiet"].join("-")
-
-function uniquePhone(): string {
-  return `+99893${Math.floor(1_000_000 + Math.random() * 8_999_999)}`
-}
 
 describe.skipIf(!hasDatabase)("FR-5 — transaction history", () => {
   let prisma: PrismaClient

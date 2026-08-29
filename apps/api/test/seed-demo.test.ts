@@ -26,6 +26,17 @@ import { testEnv } from "./helpers.js"
 
 const hasDatabase = Boolean(process.env.DATABASE_URL)
 
+/**
+ * Deliberately not `uniquePhone` (P-37).
+ *
+ * Every other suite was moved onto the shared helper so that one definition of
+ * a test number exists. This one stays, because the number is doing a second
+ * job here: `+998 33` is unassigned to carriers, so a row left behind by this
+ * file is recognisable as a fixture rather than as somebody's account. That
+ * matters more here than anywhere else — these tests delete rows *by phone
+ * number*, and the header above records what happened when one of them named
+ * a real account. `uniquePhone` returns `+9989…`, which looks like a customer.
+ */
 function throwawayUsers(): readonly DemoUser[] {
   const suffix = Math.floor(1_000_000 + Math.random() * 8_999_999)
   return [

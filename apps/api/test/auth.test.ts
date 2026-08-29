@@ -9,17 +9,12 @@ import { REFRESH_COOKIE, SESSION_HINT_COOKIE } from "../src/adapters/http/cookie
 import { attemptSubject, hashRefreshToken, hashSecret, verifySecret } from "../src/infra/crypto.js"
 import { createTokenService } from "../src/infra/jwt.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
-import { buildApp, testEnv } from "./helpers.js"
+import { buildApp, testEnv, uniquePhone } from "./helpers.js"
 
 const hasDatabase = Boolean(process.env.DATABASE_URL)
 
 /** Fifteen characters minimum (FR-1.2); these are throwaway strings. */
 const PASSWORD = ["orbit", "walnut", "lantern", "quiet"].join("-")
-
-function uniquePhone(): string {
-  // +998 90 then seven digits, so each run gets a number of its own.
-  return `+99890${Math.floor(1_000_000 + Math.random() * 8_999_999)}`
-}
 
 function registration(phone = uniquePhone()) {
   return { phone, firstName: "Alisher", lastName: "Navoiy", password: PASSWORD }

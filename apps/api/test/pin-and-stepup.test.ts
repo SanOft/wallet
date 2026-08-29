@@ -8,7 +8,7 @@ import { AuthService } from "../src/domain/AuthService.js"
 import { TransferService } from "../src/domain/TransferService.js"
 import { createTokenService } from "../src/infra/jwt.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
-import { buildApp, testEnv } from "./helpers.js"
+import { buildApp, testEnv, uniquePhone } from "./helpers.js"
 
 /**
  * FR-2.8's step-up and FR-9.5's PIN — two credentials, two channels, and the
@@ -25,10 +25,6 @@ const hasDatabase = Boolean(process.env.DATABASE_URL)
 /** Assembled rather than written out: a literal here trips the secret scanner. */
 const SECRET = ["orbit", "walnut", "lantern", "quiet"].join("-")
 const WRONG = ["not", "the", "one"].join("-")
-
-function uniquePhone(): string {
-  return `+99897${Math.floor(1_000_000 + Math.random() * 8_999_999)}`
-}
 
 describe.skipIf(!hasDatabase)("the PIN (FR-1.6, FR-9.5)", () => {
   let prisma: PrismaClient
