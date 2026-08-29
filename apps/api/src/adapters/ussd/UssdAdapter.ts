@@ -63,7 +63,12 @@ const DISPLAY_TIME_ZONE = "Asia/Tashkent"
 const HISTORY_NAME_CHARS = 14
 const RECIPIENT_NAME_CHARS = 30
 
-const MESSAGES = {
+/**
+ * Exported for one reason: `test/ussd.test.ts` asserts the two PIN prompts
+ * against `USSD_PIN_PROMPT`, the pattern F7's simulator reads the screen with.
+ * Asserting a copy of these strings would pin the copy, not the product.
+ */
+export const MESSAGES = {
   menu: "Wallet\n1. Balans\n2. Pul o'tkazish\n3. Tarix",
   askPin: "PIN kodni kiriting",
   askRecipient: "Qabul qiluvchi raqamini kiriting",

@@ -39,7 +39,7 @@ const DEMO_PASSWORD = ["orbit", "walnut", "lantern", "quiet"].join("-")
 /** FR-9.5's four digits, the same for both so a demo never stalls on a typo. */
 const DEMO_PIN = "1234"
 
-interface DemoUser {
+export interface DemoUser {
   readonly phone: string
   readonly firstName: string
   readonly lastName: string
@@ -61,7 +61,7 @@ const NO_TOKENS: TokenService = {
   verify: () => Promise.reject(new Error("seed-demo does not verify tokens")),
 }
 
-const DEMO_USERS: readonly DemoUser[] = [
+export const DEMO_USERS: readonly DemoUser[] = [
   { phone: "+998884615500", firstName: "Sanjar", lastName: "Juraev" },
   { phone: "+998884625500", firstName: "Amina", lastName: "Jurayeva" },
 ]
@@ -71,7 +71,21 @@ export interface DemoSeedResult {
   readonly created: boolean
 }
 
-export async function seedDemoUsers(injected?: PrismaClient): Promise<DemoSeedResult[]> {
+/**
+ * @param who whose accounts to create. Defaults to the two this script exists
+ *   for; a test passes throwaway numbers instead.
+ *
+ *   Injectable because the alternative was a test that creates and deletes the
+ *   real ones, and that turned out to be dangerous rather than merely untidy:
+ *   `+998884615500` already existed in the development database as a real
+ *   account with a balance and three transfers, registered through the UI. A
+ *   cleanup keyed on those numbers would have deleted somebody's data to prove
+ *   a script is idempotent.
+ */
+export async function seedDemoUsers(
+  injected?: PrismaClient,
+  who: readonly DemoUser[] = DEMO_USERS,
+): Promise<DemoSeedResult[]> {
   /*
    * A known password and a known PIN on two named accounts is exactly what
    * must never reach a real deployment, so the refusal is here rather than in
@@ -105,7 +119,7 @@ export async function seedDemoUsers(injected?: PrismaClient): Promise<DemoSeedRe
 
     const results: DemoSeedResult[] = []
 
-    for (const demo of DEMO_USERS) {
+    for (const demo of who) {
       /*
        * Converges on the wanted state rather than skipping when the row
        * exists, and the difference is not academic — it is the bug this script
