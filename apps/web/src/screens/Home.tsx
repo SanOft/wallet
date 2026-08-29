@@ -1,3 +1,5 @@
+import { Send } from "lucide-react"
+import { Link } from "react-router"
 import { ThemeToggle } from "../app/ThemeToggle.js"
 import { ErrorBoundary } from "../components/ErrorBoundary.js"
 import { BalanceCard } from "../features/accounts/BalanceCard.js"
@@ -38,17 +40,26 @@ export function Home() {
         <BalanceCard />
       </ErrorBoundary>
 
-      {/*
-        §13.3 puts a "Send money" call to action here, and it is deliberately
-        absent until F4 builds the route behind it. A primary button on the
-        first screen after sign-in that answers with "page not found" is worse
-        than a screen with one action: it teaches people that this app's
-        buttons cannot be trusted, on the screen where trust is being
-        established.
-      */}
-      <ErrorBoundary scope="topup" title="To'ldirish tugmasini ko'rsatib bo'lmadi.">
-        <TopUpButton />
-      </ErrorBoundary>
+      <div className="flex flex-col gap-2xs">
+        {/*
+          §13.3's call to action. F3 left it out on purpose — a primary button
+          on the first screen after sign-in that answers "page not found"
+          teaches people this app's buttons cannot be trusted — and F4 built
+          the route behind it.
+        */}
+        <Link
+          to="/transfer"
+          className="flex items-center justify-center gap-2xs rounded-(--radius-control) px-s text-(--color-on-primary)"
+          style={{ minHeight: "var(--touch-target-min)", background: "var(--color-primary)" }}
+        >
+          <Send size={18} aria-hidden={true} />
+          Pul yuborish
+        </Link>
+
+        <ErrorBoundary scope="topup" title="To'ldirish tugmasini ko'rsatib bo'lmadi.">
+          <TopUpButton />
+        </ErrorBoundary>
+      </div>
 
       {/*
         Above the history, because a queued item is not a transaction: nothing

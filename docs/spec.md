@@ -930,7 +930,7 @@ flowchart LR
 Step rules:
 
 1. **Number:** masked input; on a successful lookup a name card appears (Continue is enabled only then); otherwise the `RECIPIENT_NOT_FOUND` message. A recent-recipients list (quick pick).
-2. **Amount:** large numeric input; current balance and remaining daily limit below it; exceeding a limit produces a real-time error (client-side via the same shared Zod, without waiting for `LIMIT_EXCEEDED`).
+2. **Amount:** large numeric input; current balance and the per-operation cap below it; exceeding a limit produces a real-time error (client-side via the same shared Zod, without waiting for `LIMIT_EXCEEDED`). **The remaining daily allowance is not shown**, and that is a deliberate omission rather than an oversight: the API exposes no such figure, and the only way to compute one on the client is to sum today's outgoing transfers from a paged history — correct until somebody makes more transfers in a day than one page holds, and silently wrong after that. A wrong allowance on a money screen is worse than an absent one. Showing it needs the server to return it (P-32).
 3. **Confirm:** everything on one card; once "Send" is pressed, `status='submitting'` — the button locks (double-tap protection, which together with idempotency forms two layers of defense); above 1 million → the password field appears right here.
 4. **Result:** according to the state in 11.5; on `FAILED`, the reason + a suggested action.
 

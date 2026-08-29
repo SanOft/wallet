@@ -20,8 +20,8 @@ export type OutboxStatus = "queued" | "failed"
 export interface OutboxItem {
   /** The `Idempotency-Key`, and the primary key. One value, one meaning. */
   readonly key: string
-  /** What to send. Only the demo top-up today; F4's transfer joins it. */
-  readonly kind: "topup"
+  /** Which endpoint this belongs to. The body's shape follows from it. */
+  readonly kind: "topup" | "transfer"
   readonly body: unknown
   readonly status: OutboxStatus
   /** How many times this has actually been sent, across app restarts. */

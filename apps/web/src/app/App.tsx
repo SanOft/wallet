@@ -43,6 +43,7 @@ import { UpdatePrompt } from "./UpdatePrompt.js"
  * shell is. The first visit is the one that pays, and it pays less than before.
  */
 const Home = lazy(() => import("../screens/Home.js").then((m) => ({ default: m.Home })))
+const Transfer = lazy(() => import("../screens/Transfer.js").then((m) => ({ default: m.Transfer })))
 const History = lazy(() => import("../screens/History.js").then((m) => ({ default: m.History })))
 const Profile = lazy(() => import("../screens/Profile.js").then((m) => ({ default: m.Profile })))
 const FormShowcase = lazy(() =>
@@ -157,6 +158,14 @@ function Shell() {
               element={
                 <RequireAuth>
                   <Home />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/transfer"
+              element={
+                <RequireAuth>
+                  <Transfer />
                 </RequireAuth>
               }
             />

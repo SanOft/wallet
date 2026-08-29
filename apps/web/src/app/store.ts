@@ -1,6 +1,7 @@
 import { configureStore, createListenerMiddleware } from "@reduxjs/toolkit"
 import { authApi } from "../features/auth/api.js"
 import { authSlice, signedOut } from "../features/auth/authSlice.js"
+import { transferSlice } from "../features/transfer/transferSlice.js"
 import { clearOutbox } from "../lib/outbox.js"
 import { clearReadCache } from "../lib/readCache.js"
 import { walletApi } from "./api.js"
@@ -68,6 +69,7 @@ export function makeStore() {
   const store = configureStore({
     reducer: {
       [authSlice.reducerPath]: authSlice.reducer,
+      [transferSlice.reducerPath]: transferSlice.reducer,
       [authApi.reducerPath]: authApi.reducer,
       [walletApi.reducerPath]: walletApi.reducer,
     },

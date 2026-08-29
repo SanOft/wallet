@@ -62,6 +62,19 @@ export function transferRouter({ transfers, tokens, prisma }: TransferRouterDepe
         amount: input.amount,
         idempotencyKey: key.data,
         channel: "WEB",
+        /*
+         * FR-2.8's confirmation, forwarded rather than dropped.
+         *
+         * It was dropped here for a while, and nothing caught it: the service
+         * tests call `execute` directly, so they proved the rule and never
+         * exercised the two lines that carry a password to it. Every large
+         * transfer came back `STEP_UP_REQUIRED` however carefully the user
+         * typed. A browser found it in one attempt.
+         *
+         * Spread conditionally because `exactOptionalPropertyTypes` is on and
+         * `password: undefined` is not the same as absent.
+         */
+        ...(input.password === undefined ? {} : { password: input.password }),
       })
 
       respond(res, 201, transferResponseSchema, toWire(result))
