@@ -434,6 +434,12 @@ describe("step 4 — what actually happened", () => {
     expect(screen.getByText(/t-4242/)).toBeInTheDocument()
   })
 
+  /**
+   * §18.2 **S-9**, the half that costs money if it is wrong: a transfer
+   * composed offline is queued, and the screen must not describe it as one
+   * that happened. The retry policy and the round trip are in
+   * `outbox.test.tsx`.
+   */
   it("does not call a queued transfer sent", async () => {
     await reachConfirm("1000")
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(false)

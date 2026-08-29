@@ -117,6 +117,15 @@ async function showHome() {
   return screen.findByRole("button", { name: /demo to'ldirish/i })
 }
 
+/**
+ * §18.2 **S-9**: "offline transfer → online → sent automatically → COMPLETED;
+ * no retry on 4xx".
+ *
+ * Split across two files, deliberately rather than by accident. The refusal
+ * half and the round trip are here. The half that matters most — that a queued
+ * transfer is never described to the user as one that happened — lives in
+ * `transfer.test.tsx`, beside the wizard that would otherwise say so.
+ */
 describe("the retry policy on its own (FR-8.4)", () => {
   it("never retries anything the server understood and refused", () => {
     for (const status of [400, 401, 403, 404, 409, 422]) {
