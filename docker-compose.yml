@@ -1,0 +1,62 @@
+# The database the integration suites need.
+#
+# It exists because the local one did not: for most of this project the tests
+# ran against a container somebody had typed out by hand months earlier, with
+# no definition in the repository. The day it stopped binding there was nothing
+# to recreate it from, and `yarn verify` could only be run in CI.
+#
+# Pinned to the image CI uses (.github/workflows/ci.yml) so that a local pass
+# and a CI pass mean the same thing. A local Postgres 16 that accepts what 17
+# rejects is worse than no local database at all.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+
+    # 5434, and the reason is worth a paragraph because the failure gives no
+    # useful clue.
+    #
+    # 5432 is normally taken by a native install. The obvious escape is a high
+    # port, and this project used 55432 — but Windows reserves rotating blocks
+    # of high ports for Hyper-V and WinNAT, and one of those blocks moved to
+    # cover 55383-55482. The container had run for weeks; it then refused to
+    # start with `bind: An attempt was made to access a socket in a way
+    # forbidden by its access permissions`, which names neither the reservation
+    # nor the range. `netsh int ipv4 show excludedportrange protocol=tcp` is
+    # what shows it.
+    #
+    # Ports below 49152 are never in those blocks, so this cannot recur.
+    #
+    # Bound to loopback rather than to every interface. The cluster holds test
+    # fixtures and nothing worth stealing, but a database listening on 0.0.0.0
+    # is listening on every network the laptop later joins.
+    ports:
+      - "127.0.0.1:5434:5432"
+
+    environment:
+      # Throwaway, and deliberately the same pair CI uses. These credentials
+      # reach a container that holds generated fixtures, on loopback, and
+      # nothing else — the real secret is DATABASE_URL in apps/api/.env, which
+      # is gitignored and stays that way.
+      POSTGRES_USER: wallet
+      POSTGRES_PASSWORD: wallet
+      POSTGRES_DB: wallet
+
+    volumes:
+      - wallet-pgdata:/var/lib/postgresql/data
+      # Read-only: the entrypoint only ever reads this, and a container
+      # that can rewrite its own bootstrap is a container whose next
+      # fresh start is not reproducible.
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+
+    # `docker compose up -d --wait` returns once this passes, so the migration
+    # that follows it does not race the server's startup.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wallet -d wallet"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  wallet-pgdata:
