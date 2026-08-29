@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client"
 import {
+  historyItemSchema,
   historyQuerySchema,
   historyResponseSchema,
   idempotencyKeySchema,
@@ -7,6 +8,7 @@ import {
   transferResponseSchema,
 } from "@wallet/shared"
 import { Router } from "express"
+import * as z from "zod"
 import { DomainError, ValidationError } from "../../../domain/errors.js"
 import type {
   HistoryRow,
@@ -111,6 +113,31 @@ export function transferRouter({ transfers, tokens, prisma }: TransferRouterDepe
       items: page.rows.map(toHistoryWire),
       nextCursor: page.nextCursor,
     })
+  })
+
+  /**
+   * `GET /api/transfers/:id` — FR-5.3's detail.
+   *
+   * Registered after the collection route so `/api/transfers` is never matched
+   * by this one. Express would not confuse them, but the ordering says the
+   * relationship out loud.
+   *
+   * A transfer that is not the caller's answers exactly as one that does not
+   * exist. Distinguishing them would make this an oracle for which ids are
+   * real, which is the same disclosure FR-4.9 pays a masked name to avoid.
+   */
+  router.get("/api/transfers/:id", requireAuth(tokens), async (req, res) => {
+    if (!req.userId) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
+
+    const id = z.uuid().safeParse(req.params.id)
+    // A malformed id is not a lookup worth doing, and answering it the same way
+    // keeps the two indistinguishable from outside.
+    if (!id.success) throw new DomainError("NOT_FOUND", "No such transfer")
+
+    const row = await transfers.transferFor(req.userId, id.data)
+    if (!row) throw new DomainError("NOT_FOUND", "No such transfer")
+
+    respond(res, 200, historyItemSchema, toHistoryWire(row))
   })
 
   return router

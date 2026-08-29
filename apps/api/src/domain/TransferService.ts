@@ -320,6 +320,49 @@ export class TransferService {
    * A direction filter collapses this back to one query, because there is then
    * only one side to read.
    */
+  /**
+   * One transfer, if it is the caller's (FR-5.3).
+   *
+   * Ownership is part of the query rather than a check after it, and the
+   * difference matters: a `findUnique` followed by an `if` returns the row to
+   * a variable before deciding, and every later edit to that function is one
+   * `return` away from leaking it. Written as a filter, a stranger's transfer
+   * simply does not exist.
+   *
+   * `null` rather than a thrown NOT_FOUND, so the adapter decides what a
+   * missing transfer means — and it means the same thing whether the id is
+   * unknown or belongs to somebody else. Distinguishing them would turn this
+   * endpoint into an oracle for which transfer ids exist.
+   */
+  async transferFor(userId: string, transferId: string): Promise<HistoryRow | null> {
+    const accounts = await this.#prisma.account.findMany({
+      where: { userId },
+      select: { id: true },
+    })
+    const mine = accounts.map((account) => account.id)
+    if (mine.length === 0) return null
+
+    const transfer = await this.#prisma.transfer.findFirst({
+      where: {
+        id: transferId,
+        OR: [{ fromAccountId: { in: mine } }, { toAccountId: { in: mine } }],
+      },
+      select: {
+        id: true,
+        createdAt: true,
+        status: true,
+        type: true,
+        channel: true,
+        amount: true,
+        fromAccountId: true,
+        fromAccount: { select: { type: true, user: PARTY } },
+        toAccount: { select: { type: true, user: PARTY } },
+      },
+    })
+
+    return transfer ? toHistoryRow(transfer, mine) : null
+  }
+
   async history(input: HistoryInput): Promise<HistoryPage> {
     const accounts = await this.#prisma.account.findMany({
       where: { userId: input.userId },
@@ -403,30 +446,7 @@ export class TransferService {
     const last = page.at(-1)
 
     return {
-      rows: page.map((transfer) => {
-        const outgoing = mine.includes(transfer.fromAccountId)
-        const other = outgoing ? transfer.toAccount : transfer.fromAccount
-
-        return {
-          id: transfer.id,
-          createdAt: transfer.createdAt,
-          status: transfer.status,
-          type: transfer.type,
-          channel: transfer.channel,
-          direction: outgoing ? ("outgoing" as const) : ("incoming" as const),
-          amount: transfer.amount,
-          /*
-           * Keyed on the account being the treasury rather than on the
-           * transfer being a TOPUP: the two agree today, and if they ever stop
-           * agreeing it is the account that decides whether there is a person
-           * on the other side to name.
-           */
-          counterparty:
-            other.type === "TREASURY"
-              ? null
-              : { maskedName: maskRecipientName(other.user.firstName, other.user.lastName) },
-        }
-      }),
+      rows: page.map((transfer) => toHistoryRow(transfer, mine)),
       nextCursor: found.length > input.limit && last ? encodeCursor(last.createdAt, last.id) : null,
     }
   }
@@ -1100,4 +1120,55 @@ function decodeCursor(raw: string): { createdAt: Date; id: string } {
   if (Number.isNaN(createdAt.getTime())) throw invalid
 
   return { createdAt, id }
+}
+
+/** The Prisma projection both reads share, named so they cannot drift apart. */
+interface TransferRow {
+  readonly id: string
+  readonly createdAt: Date
+  readonly status: HistoryRow["status"]
+  readonly type: HistoryRow["type"]
+  readonly channel: HistoryRow["channel"]
+  readonly amount: bigint
+  readonly fromAccountId: string
+  readonly fromAccount: { readonly type: string; readonly user: Party }
+  readonly toAccount: { readonly type: string; readonly user: Party }
+}
+
+interface Party {
+  readonly firstName: string
+  readonly lastName: string
+}
+
+/**
+ * One row, from whichever side of it the caller stands on.
+ *
+ * Shared by the list and the single read rather than written twice: the two
+ * would drift, and the field they would drift on is `direction` — which is the
+ * sign of the amount, so the drift would show up as a payment rendered as a
+ * debit on one screen and a credit on another.
+ */
+function toHistoryRow(transfer: TransferRow, mine: readonly string[]): HistoryRow {
+  const outgoing = mine.includes(transfer.fromAccountId)
+  const other = outgoing ? transfer.toAccount : transfer.fromAccount
+
+  return {
+    id: transfer.id,
+    createdAt: transfer.createdAt,
+    status: transfer.status,
+    type: transfer.type,
+    channel: transfer.channel,
+    direction: outgoing ? "outgoing" : "incoming",
+    amount: transfer.amount,
+    /*
+     * Keyed on the account being the treasury rather than on the transfer
+     * being a TOPUP: the two agree today, and if they ever stop agreeing it is
+     * the account that decides whether there is a person on the other side to
+     * name.
+     */
+    counterparty:
+      other.type === "TREASURY"
+        ? null
+        : { maskedName: maskRecipientName(other.user.firstName, other.user.lastName) },
+  }
 }
