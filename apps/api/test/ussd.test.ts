@@ -317,6 +317,14 @@ describe.skipIf(!hasDatabase)("a USSD session end to end (FR-9, §11.7)", () => 
     expect(await dial(user, "1*1234", session)).toContain("Balans:")
   })
 
+  /**
+   * §18.2 **S-8**, second half: "3 wrong PINs → 1h block".
+   *
+   * The first half — a full transfer session — is the gateway round trip in
+   * "creates one transfer when the gateway delivers the last step twice",
+   * which walks `2*phone*amount*pin` end to end and is the stronger version of
+   * the scenario: it does it twice and still moves the money once.
+   */
   it("blocks the channel after three wrong PINs (FR-9.5)", async () => {
     const user = await newUser()
     await setPin(user)
