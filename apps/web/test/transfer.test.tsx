@@ -25,6 +25,10 @@ const SECRET = ["orbit", "walnut", "lantern", "quiet"].join("-")
 const ACCOUNTS = {
   accounts: [{ id: "a1", currency: "UZS", balance: "500000000", type: "USER" }],
   user: { id: "u1", phone: "+998901234567", firstName: "Alisher", lastName: "Navoiy" },
+  limits: {
+    perOperation: "1000000000",
+    daily: { limit: "3000000000", spent: "0", remaining: "3000000000" },
+  },
 }
 const RECIPIENT = { phone: "+998907654321", maskedName: "ZULFIYA K." }
 
@@ -55,6 +59,10 @@ interface Reply {
   readonly body: unknown
 }
 
+/** The history the quick pick is derived from, and the allowance the amount
+ * step enforces: both are server state, so both are set per test. */
+let historyItems: unknown[]
+let dailyRemaining: string
 let transferReplies: Array<Reply | "network-failure">
 let transferCalls: Array<{ key: string | null; body: Record<string, unknown> }>
 let lookupReply: Reply | "network-failure"
@@ -75,6 +83,8 @@ beforeEach(async () => {
   giveSessionHint()
   window.history.pushState({}, "", "/transfer")
 
+  historyItems = []
+  dailyRemaining = ACCOUNTS.limits.daily.remaining
   transferReplies = []
   transferCalls = []
   lookupReply = { status: 200, body: RECIPIENT }
@@ -102,8 +112,11 @@ beforeEach(async () => {
     }
 
     if (url.pathname === "/api/auth/refresh") return json({ accessToken: "s", user: null })
-    if (url.pathname === "/api/accounts") return json(ACCOUNTS)
-    if (url.pathname === "/api/transfers") return json({ items: [], nextCursor: null })
+    if (url.pathname === "/api/accounts") {
+      const daily = { ...ACCOUNTS.limits.daily, remaining: dailyRemaining }
+      return json({ ...ACCOUNTS, limits: { ...ACCOUNTS.limits, daily } })
+    }
+    if (url.pathname === "/api/transfers") return json({ items: historyItems, nextCursor: null })
     if (url.pathname === "/api/rates") {
       return json({ rates: [], fetchedAt: "2026-08-28T10:00:00.000Z", stale: false })
     }
@@ -141,6 +154,72 @@ async function reachConfirm(soum: string) {
   await userEvent.click(screen.getByRole("button", { name: /davom etish/i }))
   return screen.findByRole("heading", { name: "Tasdiqlash", level: 1 })
 }
+
+/** One outgoing row, shaped as `historyItemSchema` requires. */
+function sentTo(phone: string, maskedName: string) {
+  return {
+    id: crypto.randomUUID(),
+    createdAt: "2026-08-28T10:00:00.000Z",
+    status: "COMPLETED",
+    type: "P2P",
+    channel: "WEB",
+    direction: "outgoing",
+    amount: "100000",
+    counterparty: { maskedName, phone },
+  }
+}
+
+describe("step 1 — the quick pick", () => {
+  it("still looks the person up, rather than trusting a stored number", async () => {
+    /*
+     * The whole point of step 1 is that Continue needs a lookup (FR-4.9), and
+     * a shortcut that filled the field and enabled Continue would be a way
+     * around it — the number came from this device's history, which is not the
+     * same as the account still existing under that name today.
+     */
+    historyItems = [sentTo(RECIPIENT.phone, RECIPIENT.maskedName)]
+    await openWizard()
+
+    const pick = await screen.findByRole("button", { name: /ZULFIYA K\./ })
+    await userEvent.click(pick)
+
+    // The field's own display grouping (§13.8), not the raw E.164 behind it.
+    expect(screen.getByLabelText(/qabul qiluvchi raqami/i)).toHaveValue("+998 90 765 43 21")
+
+    // Reached the amount step without a keystroke, because the pick searched.
+    await userEvent.click(await screen.findByRole("button", { name: /davom etish/i }))
+    expect(await screen.findByRole("heading", { name: "Qancha", level: 1 })).toBeVisible()
+  })
+
+  it("is absent on a first transfer", async () => {
+    await openWizard()
+
+    expect(screen.queryByRole("button", { name: /ZULFIYA K\./ })).not.toBeInTheDocument()
+  })
+})
+
+describe("step 2 — the daily allowance", () => {
+  it("refuses an amount the server would refuse, before spending the round trip", async () => {
+    dailyRemaining = "50000000" // 500 000 so'm left of the day.
+    await reachAmount()
+
+    expect(await screen.findByText("500 000 so'm")).toBeVisible()
+
+    await userEvent.type(screen.getByLabelText(/summa/i), "600000")
+
+    expect(await screen.findByText("Bugungi chegaradan oshdi")).toBeVisible()
+    expect(screen.getByRole("button", { name: /davom etish/i })).toBeDisabled()
+  })
+
+  it("lets an amount within the allowance through", async () => {
+    dailyRemaining = "50000000"
+    await reachAmount()
+    await userEvent.type(screen.getByLabelText(/summa/i), "400000")
+
+    await userEvent.click(screen.getByRole("button", { name: /davom etish/i }))
+    expect(await screen.findByRole("heading", { name: "Tasdiqlash", level: 1 })).toBeVisible()
+  })
+})
 
 describe("step 1 — who the money is for", () => {
   it("will not advance on a number that was never looked up", async () => {

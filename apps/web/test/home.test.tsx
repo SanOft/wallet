@@ -26,6 +26,10 @@ interface Reply {
 const ACCOUNTS = {
   accounts: [{ id: "a1", currency: "UZS", balance: "125000000", type: "USER" }],
   user: { id: "u1", phone: "+998901234567", firstName: "Alisher", lastName: "Navoiy" },
+  limits: {
+    perOperation: "1000000000",
+    daily: { limit: "3000000000", spent: "0", remaining: "3000000000" },
+  },
 }
 
 const HISTORY = {
@@ -38,7 +42,7 @@ const HISTORY = {
       channel: "WEB",
       direction: "outgoing",
       amount: "500000",
-      counterparty: { maskedName: "ZULFIYA K." },
+      counterparty: { maskedName: "ZULFIYA K.", phone: "+998907654321" },
     },
     {
       id: "t2",
