@@ -839,7 +839,7 @@ Contrast for every pair was computed with the WCAG 2.1 relative luminance formul
 | `color-success`        | `#067647` | `#47CD89` | COMPLETED, incoming (+)        | **5.69 / 9.31** ✓         |
 | `color-danger`         | `#B42318` | `#F97066` | FAILED, outgoing (−), errors   | **6.57 / 6.77** ✓; on `surface-sunken` **6.29 / 6.18** ✓ |
 | `color-warning`        | `#B54708` | `#FDB022` | PENDING, stale-data banner     | **5.43 / 10.25** ✓        |
-| `color-neutral`        | `#667085` | `#85888E` | QUEUED, disabled elements      | —                         |
+| `color-neutral`        | `#667085` | `#85888E` | QUEUED, disabled elements      | **4.97 / 5.31** ✓; on `surface-sunken` **4.76 / 4.85** ✓ — the tightest pair in the system |
 
 Following the Stripe pattern, every "background" color has an `on-*` counterpart — a component never has to guess which text color will work on it.
 
