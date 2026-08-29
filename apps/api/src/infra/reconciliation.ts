@@ -22,12 +22,29 @@ export interface Drift {
   readonly drift: bigint
 }
 
+/** One entry whose `balanceAfter` is not its account's running total (P-21). */
+export interface ChainBreak {
+  readonly entryId: string
+  readonly accountId: string
+  readonly claimed: bigint
+  readonly actual: bigint
+}
+
 export interface ReconciliationReport {
   readonly checkedAt: Date
   /** I-1. Zero, always, without exception (§9.4). */
   readonly globalSum: bigint
   /** I-4. Empty, or the system has lost track of somebody's money. */
   readonly drifts: readonly Drift[]
+  /**
+   * P-21. Empty, or the audit trail §9.2 promises cannot be trusted.
+   *
+   * Since the COMMIT-time check exists, a break here can only come from a row
+   * written before that migration or from something that bypassed the trigger
+   * — which is precisely the pair of cases a daily job is still for. It was
+   * the third thing that validated `balanceAfter` at all, and it did not.
+   */
+  readonly chainBreaks: readonly ChainBreak[]
 }
 
 interface DriftRow {
@@ -38,6 +55,13 @@ interface DriftRow {
 
 interface SumRow {
   readonly total: bigint | null
+}
+
+interface ChainRow {
+  readonly entryId: string
+  readonly accountId: string
+  readonly claimed: bigint
+  readonly actual: bigint
 }
 
 export async function reconcile(prisma: PrismaClient): Promise<ReconciliationReport> {
@@ -67,9 +91,34 @@ export async function reconcile(prisma: PrismaClient): Promise<ReconciliationRep
     SELECT COALESCE(SUM("amount"), 0)::bigint AS "total" FROM "ledger_entries"
   `
 
+  /**
+   * Ordered by `seq`, not by `createdAt`, and the difference is the whole
+   * reason the column exists: `createdAt` defaults to the transaction
+   * timestamp, so every entry one transaction wrote shares it and the window
+   * function would order them arbitrarily — reporting breaks that are not
+   * there, which is worse than reporting none.
+   */
+  const chainBreaks = await prisma.$queryRaw<ChainRow[]>`
+    WITH running AS (
+      SELECT "id", "accountId", "balanceAfter",
+             SUM("amount") OVER (PARTITION BY "accountId" ORDER BY "seq"
+                                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)::bigint
+               AS "total"
+        FROM "ledger_entries"
+    )
+    SELECT "id"            AS "entryId",
+           "accountId"     AS "accountId",
+           "balanceAfter"::bigint AS "claimed",
+           "total"         AS "actual"
+      FROM running
+     WHERE "balanceAfter" <> "total"
+     ORDER BY "accountId", "entryId"
+  `
+
   return {
     checkedAt: new Date(),
     globalSum: total?.total ?? 0n,
+    chainBreaks,
     drifts: drifts.map((row) => ({
       accountId: row.accountId,
       snapshot: row.snapshot,
@@ -87,5 +136,11 @@ export async function reconcile(prisma: PrismaClient): Promise<ReconciliationRep
  * amount of waiting resolves that — somebody has to look.
  */
 export function isHealthy(report: ReconciliationReport): boolean {
-  return report.globalSum === 0n && report.drifts.length === 0
+  /*
+   * A chain break counts as unhealthy even though no balance is wrong when it
+   * happens. §9.2 sells `balanceAfter` as making an audit O(1), and an audit
+   * column that lies is worse than one that does not exist — the reconciliation
+   * built on it would be reading from the source it is meant to police.
+   */
+  return report.globalSum === 0n && report.drifts.length === 0 && report.chainBreaks.length === 0
 }
