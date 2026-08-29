@@ -168,6 +168,46 @@ describe.skipIf(!hasDatabase)("registration (FR-1)", () => {
     expect(accounts[0]?.type).toBe("USER")
   })
 
+  it("records a refused registration, and keeps it away from the login backoff", async () => {
+    /*
+     * Two claims, and the second is the one that matters.
+     *
+     * A refused registration now writes an `auth_attempt` and commits it
+     * (P-13). That is worth having on its own — an unauthenticated endpoint
+     * that creates accounts previously left no trace when it refused — but it
+     * puts rows in the table FR-2.3's backoff counts, which is a lockout
+     * waiting to happen: anyone may name any number here, so a shared subject
+     * would let an attacker freeze a stranger's *login* by repeatedly
+     * attempting to register their number.
+     *
+     * `registrationSubject` is domain-separated from `attemptSubject` for
+     * exactly that reason, and this asserts the separation rather than trusting
+     * the prefix to stay right.
+     */
+    const { app } = buildApp(prisma, { ...process.env })
+    const body = registration()
+
+    expect((await request(app).post("/api/auth/register").send(body)).status).toBe(201)
+
+    const before = await prisma.authAttempt.count()
+
+    // Well past FR-2.3's three free attempts: if these landed on the login
+    // subject, the sign-in below would be refused with 429.
+    for (let i = 0; i < 6; i++) {
+      const refused = await request(app).post("/api/auth/register").send(body)
+      expect(refused.status).toBe(400)
+      expect(refused.body.error.code).toBe("REGISTRATION_FAILED")
+    }
+
+    expect(await prisma.authAttempt.count(), "a refusal left no record").toBe(before + 6)
+
+    const signIn = await request(app)
+      .post("/api/auth/login")
+      .send({ phone: body.phone, password: body.password })
+
+    expect(signIn.status, JSON.stringify(signIn.body)).toBe(200)
+  })
+
   it("never puts a password hash on the wire", async () => {
     const { app } = buildApp(prisma, { ...process.env })
     const res = await request(app).post("/api/auth/register").send(registration())
