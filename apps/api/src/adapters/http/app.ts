@@ -19,10 +19,11 @@ import { recipientRouter } from "./routes/recipients.js"
 import { transferRouter } from "./routes/transfers.js"
 import { ussdRouter } from "./routes/ussd.js"
 import {
-  authRateLimit,
   corsPolicy,
   globalRateLimit,
+  loginRateLimit,
   noStore,
+  registerRateLimit,
   securityHeaders,
   terminatePreflight,
   varyOrigin,
@@ -132,8 +133,13 @@ export function createApp({
   // After the body limit would be too late for a flood of small requests, and
   // before the routers so a throttled caller costs nothing but the counter.
   app.use(globalRateLimit())
-  // Registration and login carry their own, much tighter, budget.
-  app.use(["/api/auth/register", "/api/auth/login"], authRateLimit())
+  /*
+   * Separate budgets, because the two endpoints are limiting different things:
+   * registration caps identities created (successes included, P-20), login
+   * caps passwords guessed (failures only, P-25).
+   */
+  app.use("/api/auth/register", registerRateLimit())
+  app.use("/api/auth/login", loginRateLimit())
 
   // Only now: a refused origin has already been counted, and an allowed
   // preflight is answered here.

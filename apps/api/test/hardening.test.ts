@@ -268,10 +268,21 @@ describe("rate limiting (§17.1 denial of service, §17.3)", () => {
   })
 
   it("answers a throttled caller with the §12.3 envelope", async () => {
+    /*
+     * Sixty, because the login budget counts *failures* and allows fifty
+     * (P-25). Twenty-four was enough when it counted every attempt and allowed
+     * twenty; against the new control it never fired, and the test said the
+     * envelope was missing when what was missing was the throttle.
+     *
+     * Every request here fails — `PRISMA_STUB` cannot answer a query, so the
+     * route 500s — which is what makes this a clean probe of the limiter: a
+     * 429 cannot have come from FR-2.3's backoff, because nothing reached the
+     * database to count against it.
+     */
     const instance = app()
 
     let throttled: request.Response | undefined
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 60; i++) {
       const res = await request(instance)
         .post("/api/auth/login")
         .send({ phone: "+998901234567", password: "x" })
