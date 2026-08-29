@@ -3,6 +3,7 @@ import { ArrowDownLeft, ArrowUpRight, Clock, TriangleAlert } from "lucide-react"
 import { Link } from "react-router"
 import { FreshnessLine } from "../../components/Freshness.js"
 import { Skeleton } from "../../components/Skeleton.js"
+import { amountTone } from "../../lib/amountTone.js"
 import { formatWhen } from "../../lib/datetime.js"
 import { useCachedQuery } from "../../lib/useCachedQuery.js"
 import { RECENT_COUNT, useRecentTransfersQuery } from "./api.js"
@@ -38,6 +39,7 @@ function Row(props: { readonly item: HistoryItem }) {
   const incoming = item.direction === "incoming"
   const Arrow = incoming ? ArrowDownLeft : ArrowUpRight
   const status = STATUS[item.status]
+  const tone = amountTone(item.direction, item.status)
 
   /*
    * The counterparty is null for a top-up, where the other side is the
@@ -52,7 +54,9 @@ function Row(props: { readonly item: HistoryItem }) {
         size={20}
         aria-hidden={true}
         className="shrink-0"
-        style={{ color: incoming ? "var(--color-success)" : "var(--color-text-secondary)" }}
+        // The arrow follows the amount: a green inbound arrow on a failed
+        // transfer is the same lie in a smaller font.
+        style={{ color: tone.colour }}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -72,15 +76,20 @@ function Row(props: { readonly item: HistoryItem }) {
 
       <span
         className="tabular shrink-0 text-step-0"
-        style={{ color: incoming ? "var(--color-success)" : "var(--color-text)" }}
+        style={{
+          color: tone.colour,
+          // Nothing moved, so the figure is shown as not having happened.
+          textDecoration: tone.struck ? "line-through" : undefined,
+        }}
       >
         {/*
           The sign is text, not decoration: `direction` carries it on the wire
           precisely so a client cannot render an incoming payment as a debit by
-          flipping one comparison.
+          flipping one comparison. What it must *not* do is decide the colour on
+          its own — a failed top-up rendered green with a plus until it did.
         */}
-        <span aria-hidden="true">{incoming ? "+ " : "− "}</span>
-        <span className="sr-only">{incoming ? "kirim " : "chiqim "}</span>
+        <span aria-hidden="true">{tone.sign}</span>
+        <span className="sr-only">{tone.label}</span>
         {formatMoney(BigInt(item.amount), "UZS")}
       </span>
     </li>

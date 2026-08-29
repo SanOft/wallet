@@ -177,6 +177,28 @@ body {
 }
 
 /* NFR-4: a visible focus ring, and one that survives a dark background. */
+/* A control that cannot be pressed must not look like one that can.
+ *
+ * Every disabled button in this application rendered identically to an enabled
+ * one: `disabled` was set, and nothing said so. The transfer wizard's "Davom
+ * etish" was full brand blue with white text while refusing every press, which
+ * is how somebody concludes the recipient search is broken — the search had
+ * worked, and the button that looked ready was the one that was not.
+ *
+ * Here rather than as a utility class on each button, for the same reason the
+ * focus ring below is here: eight components had the same decision to make and
+ * eight is where the disagreement starts. A new button gets this for free,
+ * which is the half that matters.
+ *
+ * Opacity rather than a colour, so the signal survives a colour-blind reader
+ * and both themes (NFR-4), and `not-allowed` so a pointer says it before the
+ * click. Native `disabled` already carries the fact to a screen reader. */
+button:disabled,
+[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 :focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
