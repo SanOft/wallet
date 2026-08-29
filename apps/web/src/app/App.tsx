@@ -2,6 +2,7 @@ import { setupListeners } from "@reduxjs/toolkit/query"
 import { lazy, type ReactNode, Suspense, useEffect, useState } from "react"
 import { Provider } from "react-redux"
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router"
+import { ConnectionBanner } from "../components/ConnectionBanner.js"
 import { ErrorBoundary } from "../components/ErrorBoundary.js"
 import { LoginScreen } from "../features/auth/LoginScreen.js"
 import { RegisterScreen } from "../features/auth/RegisterScreen.js"
@@ -101,6 +102,12 @@ function Shell() {
 
   return (
     <>
+      {/*
+        Above the skip link's target and outside `main`, so it is the first
+        thing announced and does not move the page content when it appears.
+      */}
+      <ConnectionBanner />
+
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:left-s focus:top-s focus:z-20 focus:rounded-(--radius-control) focus:bg-(--color-primary) focus:px-s focus:py-2xs focus:text-(--color-on-primary)"
