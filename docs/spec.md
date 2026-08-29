@@ -352,14 +352,15 @@ flowchart TB
 
 ```mermaid
 erDiagram
-    USER ||--|| ACCOUNT : "owns (MVP one-to-one)"
+    USER ||--o{ ACCOUNT : "owns (one per currency)"
     USER ||--o{ REFRESH_TOKEN : "sessions"
     USER ||--o{ AUTH_ATTEMPT : "login attempts"
+    USER ||--o{ IDEMPOTENCY_RECORD : "replay guard, scoped per user (P-8)"
+    USER ||--o{ TRANSFER : "initiated"
     ACCOUNT ||--o{ LEDGER_ENTRY : "financial entries"
     TRANSFER ||--|{ LEDGER_ENTRY : "exactly 2 entries"
     ACCOUNT ||--o{ TRANSFER : "sent (from)"
     ACCOUNT ||--o{ TRANSFER : "received (to)"
-    TRANSFER |o--|| IDEMPOTENCY_RECORD : "key"
 
     USER {
         uuid id PK
@@ -370,12 +371,13 @@ erDiagram
         string pinHash "Argon2id, nullable"
         datetime pinLockedUntil "nullable"
         enum role "USER | SYSTEM"
+        datetime tokensValidAfter "nullable - access tokens issued before this are refused on the money routes (P-16)"
         datetime createdAt
     }
     ACCOUNT {
         uuid id PK
         uuid userId FK
-        string currency "UZS"
+        string currency "UZS - unique per user, which is what allows more than one account"
         bigint balance "cached snapshot, tiyin"
         enum type "USER | TREASURY"
         datetime createdAt
@@ -388,7 +390,8 @@ erDiagram
         enum status "PENDING | COMPLETED | FAILED"
         enum type "P2P | TOPUP"
         enum channel "WEB | USSD"
-        string idempotencyKey UK
+        uuid initiatedBy FK "who pressed send"
+        string idempotencyKey "unique with initiatedBy, not globally (P-8)"
         string failReason "nullable"
         datetime createdAt
         datetime completedAt "nullable"
@@ -399,6 +402,7 @@ erDiagram
         uuid transferId FK
         bigint amount "signed tiyin, never 0"
         bigint balanceAfter "balance after this entry"
+        bigint seq "insertion order; createdAt cannot give it - one transaction shares a timestamp (P-21)"
         datetime createdAt "immutable"
     }
     IDEMPOTENCY_RECORD {
@@ -414,15 +418,21 @@ erDiagram
         uuid userId FK
         uuid familyId "device family"
         string tokenHash "SHA-256, raw never stored"
-        datetime usedAt "nullable — reuse detector"
+        datetime usedAt "nullable - reuse detector"
         datetime revokedAt "nullable"
         datetime expiresAt
     }
     AUTH_ATTEMPT {
         uuid id PK
-        uuid userId FK
+        uuid userId FK "nullable - an unregistered number has no user"
+        string subject "keyed digest of the number, so a stranger backs off identically (FR-2.3)"
         boolean succeeded
         datetime createdAt
+    }
+    RATES_SNAPSHOT {
+        uuid id PK
+        json payload "CBU rates, validated on the way out (P-30)"
+        datetime fetchedAt
     }
 ```
 
@@ -1013,7 +1023,7 @@ The real test of a fintech UI is the unhappy paths. Defined behavior for each:
 | Phase  | Name                      | Scope                                                                                                                                   | DoD                                                             |
 | ------ | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | **B0** | Skeleton                  | Express + TS + pino + `/health`; error middleware (12.3 format); Prisma + Neon connection; `requestId`                                  | `/health` returns 200 with a DB check; error format test        |
-| **B1** | Schema and migration      | The 7 tables from 9.1; `CHECK` constraints (I-5, treasury exception); seed: SYSTEM user + TREASURY account                              | `prisma migrate` passes on a clean database; seed is idempotent |
+| **B1** | Schema and migration      | The 7 tables 9.1 defined at that point (`RatesSnapshot` joined at B4, P-30, making eight); `CHECK` constraints (I-5, treasury exception); seed: SYSTEM user + TREASURY account                              | `prisma migrate` passes on a clean database; seed is idempotent |
 | **B2** | Auth                      | Register, login (timing-safe), JWT + refresh rotation/reuse (FR-2.6/2.7), logout, `/me`. FR-2.3's per-account backoff, counted against a keyed digest of the number so an unregistered one backs off identically — a counter that skipped strangers would answer the fourth attempt with 429 for a customer and 401 for anyone else. **Deferred to September:** step-up (FR-2.8) and PIN setup (FR-1.6) — see `docs/runbook.md` §4 | FR-1, FR-2 integration tests; Section 18 S-4, S-5 green         |
 | **B3** | Domain: ledger + transfer | `TransferService` (channel-agnostic!), idempotency, Serializable + P2034 retry, limits (FR-6.1–6.3), lookup + rate limit, topup (FR-10) | S-1, S-2, S-3 green; I-1…I-6 invariant tests                    |
 | **B4** | History and rates         | Cursor pagination, filters; CBU cache (FR-7); notification records (FR-6.4)                                                             | FR-5 tests; degradation test with CBU down                      |
