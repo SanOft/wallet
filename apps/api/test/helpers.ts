@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client"
 import type { Express } from "express"
 import { createApp } from "../src/adapters/http/app.js"
 import { type Env, loadEnv } from "../src/config/env.js"
+import { AccountService } from "../src/domain/AccountService.js"
 import { AuthService } from "../src/domain/AuthService.js"
 import { RatesService } from "../src/domain/RatesService.js"
 import { TransferService } from "../src/domain/TransferService.js"
@@ -63,11 +64,22 @@ export function buildApp(
   })
   const tokens = createTokenService(env)
   const auth = new AuthService({ prisma, tokens, pepper: env.JWT_SECRET })
+  const accounts = new AccountService({ prisma, ...(now ? { now } : {}) })
   const transfers = new TransferService({ prisma, pepper: env.JWT_SECRET })
   const rates = new RatesService({ fetcher, store: new RatesRepository(prisma) })
 
   return {
-    app: createApp({ prisma, log, env, auth, tokens, transfers, rates, ...(now ? { now } : {}) }),
+    app: createApp({
+      prisma,
+      log,
+      env,
+      auth,
+      accounts,
+      tokens,
+      transfers,
+      rates,
+      ...(now ? { now } : {}),
+    }),
     logText: () => lines.join(""),
   }
 }

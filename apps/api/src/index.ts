@@ -1,5 +1,6 @@
 import { createApp } from "./adapters/http/app.js"
 import { loadEnv } from "./config/env.js"
+import { AccountService } from "./domain/AccountService.js"
 import { AuthService } from "./domain/AuthService.js"
 import { RatesService } from "./domain/RatesService.js"
 import { TransferService } from "./domain/TransferService.js"
@@ -40,6 +41,12 @@ async function main(): Promise<void> {
 
   const tokens = createTokenService(env)
   const auth = new AuthService({ prisma, tokens, pepper: env.JWT_SECRET })
+  /*
+   * One per process, because it holds FR-4.9's lookup window in memory and
+   * both channels have to share the same one — which is the whole point of
+   * P-34. A second instance is a second budget.
+   */
+  const accounts = new AccountService({ prisma })
 
   const transfers = new TransferService({
     prisma,
@@ -54,7 +61,7 @@ async function main(): Promise<void> {
     warn: (event, cause) => log.warn({ event, err: cause }, "rates degraded"),
   })
 
-  const app = createApp({ prisma, log, env, auth, tokens, transfers, rates })
+  const app = createApp({ prisma, log, env, auth, accounts, tokens, transfers, rates })
   const server = app.listen(env.PORT, () => {
     log.info({ port: env.PORT, env: env.NODE_ENV }, "wallet-api listening")
   })

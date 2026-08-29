@@ -4,18 +4,17 @@ import {
   CHANNEL_LIMITS,
   formatMoney,
   gsm7Septets,
-  maskRecipientName,
   TRANSFER_LIMITS,
   toGsm7,
   USSD_MAX_SEPTETS,
   USSD_PIN_LENGTH,
   type UssdCallback,
 } from "@wallet/shared"
+import type { AccountService } from "../../domain/AccountService.js"
 import type { AuthService } from "../../domain/AuthService.js"
 import { DomainError } from "../../domain/errors.js"
 import type { HistoryRow, TransferService } from "../../domain/TransferService.js"
 import { resolveStep } from "./steps.js"
-import { SlidingWindow } from "./window.js"
 
 /**
  * FR-9's channel adapter.
@@ -45,22 +44,11 @@ export type UssdWarning = (event: string, cause: unknown) => void
 export interface UssdAdapterDependencies {
   readonly prisma: PrismaClient
   readonly auth: AuthService
+  readonly accounts: AccountService
   readonly transfers: TransferService
   readonly warn?: UssdWarning
   readonly now?: () => Date
 }
-
-/**
- * FR-4.9's budget, applied to the one step that answers "is this number
- * registered, and who is it".
- *
- * The web caps that question at twenty per user per hour. Over USSD the same
- * question is asked before any PIN, so without this it would be an open
- * enumeration oracle — strictly weaker than the endpoint it mirrors. The
- * numbers are FR-4.9's on purpose: one rule, two channels.
- */
-const LOOKUP_LIMIT = 20
-const LOOKUP_WINDOW_MS = 60 * 60 * 1000
 
 /** Uzbekistan, where the subscribers are. A server has no locale of its own. */
 const DISPLAY_TIME_ZONE = "Asia/Tashkent"
@@ -128,28 +116,25 @@ function refusal(code: string): string {
 export class UssdAdapter {
   readonly #prisma: PrismaClient
   readonly #auth: AuthService
+  readonly #accounts: AccountService
   readonly #transfers: TransferService
   readonly #warn: UssdWarning
   readonly #now: () => Date
-  readonly #lookups = new SlidingWindow(LOOKUP_LIMIT, LOOKUP_WINDOW_MS)
 
   constructor({
     prisma,
     auth,
+    accounts,
     transfers,
     warn = () => {},
     now = () => new Date(),
   }: UssdAdapterDependencies) {
     this.#prisma = prisma
     this.#auth = auth
+    this.#accounts = accounts
     this.#transfers = transfers
     this.#warn = warn
     this.#now = now
-  }
-
-  /** Exposed so a test starts from a known budget rather than a shared one. */
-  resetLookups(): void {
-    this.#lookups.reset()
   }
 
   async handle(callback: UssdCallback): Promise<UssdReply> {
@@ -210,12 +195,9 @@ export class UssdAdapter {
    * below is gated by the PIN as well.
    */
   async #callerId(callback: UssdCallback): Promise<string> {
-    const user = await this.#prisma.user.findFirst({
-      where: { phone: callback.phoneNumber, accounts: { some: { type: "USER" } } },
-      select: { id: true },
-    })
-    if (!user) throw new UssdEnd(MESSAGES.notRegistered)
-    return user.id
+    const userId = await this.#accounts.findUserIdByPhone(callback.phoneNumber)
+    if (!userId) throw new UssdEnd(MESSAGES.notRegistered)
+    return userId
   }
 
   /**
@@ -305,26 +287,20 @@ export class UssdAdapter {
      * what is added is the same protection the web already has.
      */
     const callerId = await this.#callerId(callback)
-    if (!this.#lookups.admit(callerId, this.#now().getTime())) {
-      throw new DomainError("RATE_LIMITED", "Too many USSD lookups")
-    }
 
     const phone = normalisedNationalPhone(step.phone)
     if (!phone) throw new UssdEnd(MESSAGES.phoneInvalid)
 
-    const recipient = await this.#prisma.user.findFirst({
-      // Exact match on the full number, as on the web: no prefix search, so
-      // the channel cannot be walked.
-      where: { phone, accounts: { some: { type: "USER" } } },
-      select: { firstName: true, lastName: true },
-    })
-    // The same answer for an unregistered number and for the treasury.
-    if (!recipient) throw new UssdEnd(refusal("RECIPIENT_NOT_FOUND"))
+    /*
+     * The cap, the exact-match query and the masking all live in
+     * `lookupRecipient` now. Both refusals it can raise — over budget, and no
+     * such recipient — are `DomainError`s, and `handle` already turns those
+     * into an `END` carrying the §12.3 code. This branch used to build that
+     * by hand, from its own copy of the rule (P-34).
+     */
+    const recipient = await this.#accounts.lookupRecipient(callerId, phone)
 
-    const name = truncate(
-      maskRecipientName(recipient.firstName, recipient.lastName),
-      RECIPIENT_NAME_CHARS,
-    )
+    const name = truncate(recipient.maskedName, RECIPIENT_NAME_CHARS)
     return { kind: "CON", text: `${name}\n${MESSAGES.askAmount}` }
   }
 

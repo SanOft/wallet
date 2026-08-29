@@ -1,15 +1,18 @@
 /**
  * A sliding count per key, in memory.
  *
- * Stated plainly, because it is the same weak control `routes/recipients.ts`
- * describes for FR-4.9: the counter resets when the process restarts and is
- * not shared between instances. Render's free tier runs one instance (§20.3).
+ * Stated plainly, because it is the weakest control in FR-4.9: the counter
+ * resets when the process restarts and is not shared between instances.
+ * Render's free tier runs one instance (§20.3) and sleeps after inactivity,
+ * so a determined enumerator could wait out a cold start. Moving it to a
+ * shared store belongs with the wider rate limiting (P-22).
  *
- * That file holds a near-identical window inline. This one is written as a
- * class rather than copied so the two can collapse into one when the
- * `AccountService` extraction (P-19) moves the lookup out of the route — a
- * second hand-rolled copy is how the web and USSD channels come to disagree
- * about what FR-4.9's twenty means.
+ * In the domain rather than beside a channel, because that is where the rule
+ * it enforces lives now. It was written as a class in `adapters/ussd` so the
+ * near-identical window inlined in `routes/recipients.ts` could collapse into
+ * it (P-34); `AccountService` owns the single remaining instance, so the web
+ * and USSD channels can no longer come to disagree about what FR-4.9's twenty
+ * means.
  */
 export class SlidingWindow {
   readonly #limit: number
