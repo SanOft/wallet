@@ -25,7 +25,7 @@
 | `packages/shared/index.ts` (barrel: re-exports all four modules) | ✅ T-1.2 done |
 | `yarn verify` + CI | ✅ `lint → build → typecheck → test`, CI runs the same command |
 | Backend skeleton (`apps/api`: layers, requestId + pino, error envelope, `/health`) | ✅ day 2 |
-| Data model (7 tables, CHECK constraints, I-3 trigger) | ✅ day 2, verified on Postgres 17 |
+| Data model (7 tables then, CHECK constraints, I-3 trigger) | ✅ day 2, verified on Postgres 17. `RatesSnapshot` was added at B4 (P-30), so 9.1 now shows eight |
 | Neon project + hosted `DATABASE_URL` (T-2.6) | ❌ outstanding — local Docker Postgres used for verification |
 | Auth, ledger, transfers | ❌ days 3–4 |
 
@@ -417,7 +417,7 @@ Every task carries: **ID · what · files · acceptance criteria**. Each day end
 | T-2.4 | Error middleware — `apiErrorSchema` shape, status from `API_ERROR_STATUS` | `adapters/http/errorHandler.ts` | A thrown domain error returns correct JSON |
 | T-2.5 | `GET /health` including a DB ping | `adapters/http/routes/health.ts` | `200 {status, db, migration}` |
 | T-2.6 | Neon project + `DATABASE_URL` | `.env`, `.env.example` | Connection works |
-| T-2.7 | Prisma schema: 7 tables (§9.1) + `CHECK` constraints | `prisma/schema.prisma` | `prisma migrate dev` clean on an empty DB |
+| T-2.7 | Prisma schema: the 7 tables §9.1 had then + `CHECK` constraints | `prisma/schema.prisma` | `prisma migrate dev` clean on an empty DB |
 | T-2.8 | Seed: `SYSTEM` user + `TREASURY` account (§9.4) | `prisma/seed.ts` | Running it twice creates no duplicates |
 
 **Outcome:** PR `feat/api-skeleton`. `verify` green.
