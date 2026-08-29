@@ -199,8 +199,17 @@ describe("step 2 — how much", () => {
   it("shows the balance rather than a zero it has not confirmed", async () => {
     await reachAmount()
 
-    // 5 000 000 so'm, grouped as the money formatter groups it.
-    expect(screen.getByText(/5 000 000/)).toBeInTheDocument()
+    /*
+     * `findByText`, not `getByText`. The balance arrives on `/api/accounts`,
+     * which is not the request `reachAmount` waits for, so a synchronous
+     * assertion here resolves on whichever settled first: three runs in eight
+     * found the dash this screen shows while the figure is still unknown.
+     * That dash is the correct render — the very thing the name asks for —
+     * and failing on it made the test call a right answer wrong.
+     *
+     * 5 000 000 so'm, grouped as the money formatter groups it.
+     */
+    expect(await screen.findByText(/5 000 000/)).toBeInTheDocument()
   })
 })
 
