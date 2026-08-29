@@ -122,6 +122,32 @@ describe("the workflows' supply chain", () => {
     }
   })
 
+  it("still offers the check name branch protection requires", () => {
+    /*
+     * `main` requires a status check named exactly `verify`. That rule lives in
+     * the repository settings, where nothing here can read it — so this is the
+     * repository's half of the contract.
+     *
+     * It is not hypothetical. Splitting `verify` into a Node matrix renamed its
+     * checks to `verify (22)` and `verify (24)`, the required `verify` stopped
+     * reporting, and every pull request became permanently unmergeable. It was
+     * caught because a pull request sat at BLOCKED with three green jobs.
+     * `verify` is now an aggregate over the others, so the matrix can change
+     * without touching a setting nobody can see from here.
+     */
+    const ci = workflows().find((w) => w.name === "ci.yml")
+    expect(ci).toBeDefined()
+
+    const lines = (ci?.text ?? "").split("\n")
+    const start = lines.findIndex((line) => line.trimEnd() === "jobs:")
+    const jobs = lines
+      .slice(start + 1)
+      .filter((line) => /^ {2}[\w-]+:\s*$/.test(line))
+      .map((line) => line.trim().replace(":", ""))
+
+    expect(jobs, "branch protection requires a job named verify").toContain("verify")
+  })
+
   it("keeps the pins from rotting", () => {
     /*
      * A pin without an updater is a freeze: the workflow runs whatever
