@@ -34,8 +34,29 @@ if (typeof window !== "undefined") {
    * runs, in different files each time. A test that fails on a busy laptop and
    * passes on an idle one teaches people to press re-run, which is how a real
    * failure gets pressed past too.
+   *
+   * **Raised from 3 000 to 10 000 (P-38).** The same symptom came back at the
+   * higher threshold, with the same signature: a varying set of four tests,
+   * different ones each run, all expiring between 3 200 and 5 200 ms. It is
+   * reproducible rather than folklore —
+   *
+   *     for i in 1 2; do (yarn vitest run --coverage=false &) ; done
+   *
+   * — fails 2/2 that way and passes 6/6 without contention. Nothing in the
+   * path waits on a timer, so the only variable is how much CPU the chain
+   * gets.
+   *
+   * The chain keeps growing, which is the real story: the transfer wizard
+   * gained a recent-recipients query and the accounts response gained the
+   * daily allowance, so the wizard now waits on strictly more than it did.
+   * A budget sized for last month's chain converts load into false failures.
+   *
+   * The cost is bounded and falls on the right side. `waitFor` returns the
+   * moment its condition holds, so a passing test pays nothing for a larger
+   * budget; only a genuinely broken one waits longer to say so. Slow true
+   * failures beat fast false ones.
    */
-  configure({ asyncUtilTimeout: 3000 })
+  configure({ asyncUtilTimeout: 10_000 })
 
   /**
    * jsdom implements no layout engine, so `matchMedia` is absent. Anything that
