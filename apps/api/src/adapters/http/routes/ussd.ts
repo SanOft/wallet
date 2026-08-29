@@ -7,6 +7,7 @@ import type { TokenService } from "../../../infra/jwt.js"
 import type { UssdAdapter, UssdReply } from "../../ussd/UssdAdapter.js"
 import { requireAuth } from "../middleware/requireAuth.js"
 import { requireCurrentSession } from "../middleware/requireCurrentSession.js"
+import { ussdGatewayRateLimit } from "../security.js"
 
 /**
  * FR-9.1's callback, and FR-9.6's simulator, on one handler.
@@ -71,6 +72,15 @@ export function ussdRouter({
      * checked for.
      */
     express.urlencoded({ extended: false, limit: "16kb" }),
+    /*
+     * After the body parser, deliberately: the budget is keyed on the
+     * subscriber's number and that number arrives in the form body (P-33).
+     * Mounted before the secret check, so a flood cannot be made cheaper by
+     * omitting the header.
+     */
+    ussdGatewayRateLimit((res) =>
+      sendReply(res, { kind: "END", text: "Xizmat band. Birozdan so'ng urinib ko'ring." }),
+    ),
     async (req, res) => {
       if (!authenticGateway(req.get("x-gateway-secret"), gatewaySecret)) {
         // A JSON 401. The caller here is an integration, not a person holding
