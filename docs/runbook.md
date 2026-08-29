@@ -524,6 +524,17 @@ rewrite destination in `apps/web/vercel.json` to the Render URL — it ships as
 `https://set-me-at-t-6-1.invalid/...` on purpose, so a forgotten step fails
 loudly instead of routing `/api` somewhere unintended.
 
+**The runtime role** (P-4). Connect to the Neon database as the owner and run
+`apps/api/prisma/runtime-role.sql`, replacing `__PASSWORD__` with a generated
+secret. Then set `DATABASE_URL` to that role everywhere below.
+`DATABASE_URL_UNPOOLED` keeps naming the owner, because migrations create and
+alter and the runtime role deliberately cannot.
+
+The file is idempotent and is also how the password is rotated: change the
+secret and run it again. `runtime-role.test.ts` runs the same file in CI and
+proves both halves — the application works on that connection, and the five
+privileged statements are refused.
+
 **GitHub secrets** (Settings → Secrets and variables → Actions):
 
 | Secret | Value |
