@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto"
 import type { PrismaClient } from "@prisma/client"
 import type { Express } from "express"
+import { expect } from "vitest"
 import { createApp } from "../src/adapters/http/app.js"
 import { type Env, loadEnv } from "../src/config/env.js"
 import { AccountService } from "../src/domain/AccountService.js"
@@ -92,21 +93,51 @@ export const PRISMA_STUB = {
 /**
  * A phone number no other test in this run will produce.
  *
- * Counter-based, not random. `Math.random()` over seven digits is only
- * *probably* unique, and P-17 recorded the consequence: the collision
- * probability grows with every account a run creates, so the suite gets
- * flakier the more it tests. It surfaced as
- * `Unique constraint failed on the fields: (phone)` in a test that had nothing
- * to do with registration.
+ * The counter is per file, because Vitest gives every test file a fresh module
+ * registry — so the counter alone repeats across files and something has to
+ * separate them. That separator used to be `Math.random()` over three digits,
+ * directly under a comment explaining why randomness was the wrong tool. With
+ * twenty test files in nine hundred buckets the birthday bound puts a
+ * collision at roughly one run in five, and the symptom is a `400
+ * REGISTRATION_FAILED` in whichever file drew the duplicate — which is P-17's
+ * failure exactly, one layer up from where it was fixed.
  *
- * The prefix keeps two runs apart — the database is reset per run, but a
- * developer pointing at a database that is not reset should not collide with
- * yesterday either.
+ * Now derived from the one thing that *is* unique per file: its own path.
+ * Deterministic, so a run either collides always or never, and
+ * `phone-uniqueness.test.ts` proves it never does for the files that exist. A
+ * future file that hashes onto a taken bucket fails that test loudly instead
+ * of making an unrelated suite flaky.
+ *
+ * Nine digits after `+998`: a leading `9` so the number looks like a mobile,
+ * four for the file, four for the counter.
+ *
+ * Neither half keeps two *runs* apart, and that is deliberate rather than
+ * missed: `global-setup.ts` truncates once per run, so yesterday's rows are
+ * gone before the first phone is minted. A developer pointing at a database
+ * that is not reset is the case P-17 closed by giving the suites their own.
  */
-const PHONE_RUN = Math.floor(Math.random() * 900 + 100)
+export function phoneBucketFor(testPath: string): string {
+  // Split on either separator: the path is a POSIX one in CI and a Windows one
+  // on a laptop, and a bucket that differed between them would put the two on
+  // different numbers for the same file.
+  const name = testPath.split(/[/\\]/).pop() ?? testPath
+
+  // FNV-1a. Not for security — for a stable spread that does not depend on
+  // the platform's string hashing, so CI and a laptop agree.
+  let hash = 2166136261
+  for (let index = 0; index < name.length; index += 1) {
+    hash ^= name.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return String(1000 + ((hash >>> 0) % 9000))
+}
+
 let phoneCounter = 0
+let phoneBucket: string | null = null
 
 export function uniquePhone(): string {
+  phoneBucket ??= phoneBucketFor(expect.getState().testPath ?? "unknown")
   phoneCounter += 1
-  return `+99893${PHONE_RUN}${String(phoneCounter).padStart(4, "0")}`
+  return `+9989${phoneBucket}${String(phoneCounter).padStart(4, "0")}`
 }
