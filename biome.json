@@ -45,5 +45,74 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["packages/shared/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "@wallet/api",
+                      "**/apps/api/**",
+                      "**/api/src/**",
+                      "@wallet/web",
+                      "**/apps/web/**",
+                      "**/web/src/**"
+                    ],
+                    "message": "packages/shared imports nothing (spec 8.2). A dependency here inverts the direction: the contract would need one of its own consumers in order to build."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/api/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@wallet/web", "**/apps/web/**", "**/web/src/**"],
+                    "message": "apps/* never import each other (spec 8.2). Anything both sides need belongs in packages/shared."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["@wallet/api", "**/apps/api/**", "**/api/src/**"],
+                    "message": "apps/* never import each other (spec 8.2). Anything both sides need belongs in packages/shared — that is what sent USSD_PIN_PROMPT there."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

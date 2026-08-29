@@ -299,7 +299,7 @@ flowchart TB
     SHARED -.->|"import"| APISRV
 ```
 
-**Key rule:** `packages/shared` imports nothing; `apps/*` import only `packages/*`; `apps/*` **never** import each other. The dependency direction is one-way. It is currently held by review rather than by a rule: `biome.json` has no `noRestrictedImports` entry yet, so the guard named here is a plan, not a control. Wiring it is tracked in `docs/PARKING.md`.
+**Key rule:** `packages/shared` imports nothing; `apps/*` import only `packages/*`; `apps/*` **never** import each other. The dependency direction is one-way, and it is now a control rather than a convention: `biome.json` carries a `noRestrictedImports` override per layer, each naming three forms of the same violation. The third form matters — `../../api/src/domain/AuthService.js` is what a relative escape actually looks like, `tsc` compiles it without complaint, and the package-name pattern misses it (P-10).
 
 ### 8.3 Backend internal layers (C3) — Ports & Adapters
 
