@@ -6,7 +6,7 @@ import { seed } from "../prisma/seed.js"
 import { TransferService } from "../src/domain/TransferService.js"
 import { LedgerRepository } from "../src/infra/LedgerRepository.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
-import { buildApp, testEnv } from "./helpers.js"
+import { buildApp, testEnv, uniquePhone } from "./helpers.js"
 
 const hasDatabase = Boolean(process.env.DATABASE_URL)
 
@@ -14,10 +14,6 @@ const PASSWORD = ["orbit", "walnut", "lantern", "quiet"].join("-")
 
 /** 1 000 UZS in tiyin — the FR-4.7 minimum. */
 const MIN_TRANSFER = 100_000n
-
-function uniquePhone(): string {
-  return `+99891${Math.floor(1_000_000 + Math.random() * 8_999_999)}`
-}
 
 describe.skipIf(!hasDatabase)("money transfer (FR-4)", () => {
   let prisma: PrismaClient

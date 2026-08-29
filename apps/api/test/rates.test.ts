@@ -7,7 +7,7 @@ import { memoryRatesStore, RatesService } from "../src/domain/RatesService.js"
 import { fetchCbuRates } from "../src/infra/cbu.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
 import { RatesRepository } from "../src/infra/RatesRepository.js"
-import { buildApp, testEnv } from "./helpers.js"
+import { buildApp, testEnv, uniquePhone } from "./helpers.js"
 
 /**
  * FR-7, and the degradation that is the only interesting part of it.
@@ -392,7 +392,7 @@ describe.skipIf(!hasDatabase)("FR-7 — over HTTP", () => {
   })
 
   async function tokenFor(app: Parameters<typeof request>[0]) {
-    const phone = `+99895${Math.floor(1_000_000 + Math.random() * 8_999_999)}`
+    const phone = uniquePhone()
     const res = await request(app)
       .post("/api/auth/register")
       .send({ phone, firstName: "Muhammadali", lastName: "Toshmatov", password: PASSWORD })
