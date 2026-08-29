@@ -27,6 +27,22 @@ try {
  * a throwaway container has nothing to protect. Where it is set, the tests move;
  * where it is not, nothing changes.
  */
+/**
+ * Registration answers in constant time in production and immediately here
+ * (P-13).
+ *
+ * `REGISTRATION_TIME_BUDGET_MS` holds every registration to a fixed duration so
+ * a refusal cannot be told from an acceptance by how long it took. The suite
+ * registers several hundred accounts, and a quarter second each would add
+ * minutes to a run that is meant to be fast enough to sit and watch.
+ *
+ * Switching a security control off for the tests is exactly the move that hides
+ * one, so it is not left implicit: `constant-time-registration.test.ts` asserts
+ * the production default is non-zero and builds its own app with a budget to
+ * prove the padding works. Turning it off here cannot turn it off there.
+ */
+process.env.REGISTRATION_TIME_BUDGET_MS ??= "0"
+
 const testDatabase = process.env.TEST_DATABASE_URL
 if (testDatabase) {
   process.env.DATABASE_URL = testDatabase

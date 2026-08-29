@@ -40,7 +40,13 @@ async function main(): Promise<void> {
   await warmDummyHash()
 
   const tokens = createTokenService(env)
-  const auth = new AuthService({ prisma, tokens, pepper: env.JWT_SECRET })
+  const auth = new AuthService({
+    prisma,
+    tokens,
+    pepper: env.JWT_SECRET,
+    registrationBudgetMs: env.REGISTRATION_TIME_BUDGET_MS,
+    warn: (event, detail) => log.warn({ event, ...(detail as object) }, "auth"),
+  })
   /*
    * One per process, because it holds FR-4.9's lookup window in memory and
    * both channels have to share the same one — which is the whole point of
