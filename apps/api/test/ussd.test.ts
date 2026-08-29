@@ -6,8 +6,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
 import { resolveStep, segmentsOf } from "../src/adapters/ussd/steps.js"
 import { UssdAdapter } from "../src/adapters/ussd/UssdAdapter.js"
-import { SlidingWindow } from "../src/adapters/ussd/window.js"
+import type { AccountService } from "../src/domain/AccountService.js"
 import type { AuthService } from "../src/domain/AuthService.js"
+import { SlidingWindow } from "../src/domain/SlidingWindow.js"
 import type { TransferService } from "../src/domain/TransferService.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
 import { buildApp, testEnv } from "./helpers.js"
@@ -147,10 +148,12 @@ describe("a transfer that did not complete", () => {
     }
 
     const adapter = new UssdAdapter({
-      prisma: {
-        user: { findFirst: async () => ({ id: "u1" }) },
-      } as unknown as PrismaClient,
+      prisma: {} as unknown as PrismaClient,
       auth: { verifyPin: async () => {} } as unknown as AuthService,
+      // Caller ID resolution went to `AccountService` with the lookup it
+      // shares a budget with, so the double answers there rather than through
+      // a bare Prisma stub.
+      accounts: { findUserIdByPhone: async () => "u1" } as unknown as AccountService,
       transfers: { execute: async () => failed } as unknown as TransferService,
     })
 
@@ -290,6 +293,45 @@ describe.skipIf(!hasDatabase)("a USSD session end to end (FR-9, §11.7)", () => 
     expect(await dial(user, "1*3333", randomUUID())).toContain("PIN bloklandi")
     // And the correct PIN no longer opens it, which is the whole point.
     expect(await dial(user, "1*1234", randomUUID())).toContain("PIN bloklandi")
+  })
+
+  it("spends FR-4.9's budget on this channel too, from the same counter", async () => {
+    /*
+     * The gap that closing P-34 exposed. The adapter enforced a cap here, and
+     * the suite only ever checked the `SlidingWindow` class in isolation — so
+     * a USSD lookup with no cap at all would have passed, which is precisely
+     * the enumeration oracle the step is gated to prevent. §11.7 asks for the
+     * recipient *before* the PIN, so this is the one disclosure on the channel
+     * that no secret stands in front of.
+     *
+     * Both channels now go through `AccountService`, and the point of this
+     * test is that a single mutation there turns this red as well as the web's
+     * equivalent in `day5.test.ts`. One rule, two consumers, one budget.
+     *
+     * It pins the *count* and deliberately not the *window*: there is no
+     * clock injected here, and shrinking `LOOKUP_WINDOW_MS` sixtyfold leaves
+     * this test green. That is the refactor's payoff rather than a hole —
+     * `day5.test.ts` advances a clock across the boundary against the same
+     * `AccountService` instance type, and there is no second window left to
+     * drift from it. Verified: no `SlidingWindow` survives outside the domain.
+     */
+    const caller = await newUser()
+    const target = await newUser("Zulfiya", "Karimova")
+    const national = target.phone.replace("+998", "")
+
+    for (let i = 0; i < 20; i++) {
+      const reply = await dial(caller, `2*${national}`, randomUUID())
+      expect(reply, `lookup ${i + 1}`).toContain("ZULFIYA K.")
+    }
+
+    /*
+     * `END`, not a JSON 429. A refusal on this channel is still a USSD reply —
+     * the §12.3 envelope the web receives would be rendered on a feature phone
+     * as the sentence the subscriber reads.
+     */
+    const refused = await dial(caller, `2*${national}`, randomUUID())
+    expect(refused).toMatch(/^END /)
+    expect(refused).not.toContain("ZULFIYA K.")
   })
 
   it("moves money through the same service the web uses", async () => {

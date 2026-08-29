@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client"
 import express, { type Express } from "express"
 import { pinoHttp } from "pino-http"
 import type { Env } from "../../config/env.js"
+import type { AccountService } from "../../domain/AccountService.js"
 import type { AuthService } from "../../domain/AuthService.js"
 import type { RatesService } from "../../domain/RatesService.js"
 import type { TransferService } from "../../domain/TransferService.js"
@@ -32,6 +33,7 @@ export interface AppDependencies {
   readonly log: Logger
   readonly env: Env
   readonly auth: AuthService
+  readonly accounts: AccountService
   readonly tokens: TokenService
   readonly transfers: TransferService
   readonly rates: RatesService
@@ -43,13 +45,12 @@ export interface AppDependencies {
  * Builds the HTTP adapter (spec §8.3). This layer parses and formats, and the
  * domain it calls knows nothing about it.
  *
- * One exception, stated rather than glossed: `routes/recipients.ts` holds
- * FR-4.9's rate limit and queries Prisma directly, and `routes/accounts.ts`
- * queries Prisma directly too. §8.3's C3 diagram puts both behind an
- * `AccountService`. The cost is concrete — the USSD adapter (B6) needs
- * recipient lookup and will either reimplement the cap or share none of it —
- * and the extraction is tracked as P-19. `transferRouter` beside them shows
- * the shape the other two should take.
+ * The exception this comment used to describe is closed. `routes/recipients.ts`
+ * held FR-4.9's rate limit and queried Prisma directly, and it predicted its
+ * own cost: "the USSD adapter (B6) needs recipient lookup and will either
+ * reimplement the cap or share none of it". B6 reimplemented it. Both now go
+ * through `AccountService`, which owns the budget, the query and the masking
+ * as one thing (P-19, P-34).
  *
  * Middleware order is load-bearing:
  *   1. requestId — everything after it, including the logger, needs the id
@@ -65,6 +66,7 @@ export function createApp({
   log,
   env,
   auth,
+  accounts,
   tokens,
   transfers,
   rates,
@@ -146,8 +148,8 @@ export function createApp({
   app.use(healthRouter(prisma))
   app.use(authRouter({ auth, tokens, env, prisma }))
   app.use(transferRouter({ transfers, tokens, prisma }))
-  app.use(accountRouter({ prisma, transfers, tokens }))
-  app.use(recipientRouter({ prisma, tokens, ...(nowFn ? { now: nowFn } : {}) }))
+  app.use(accountRouter({ prisma, accounts, transfers, tokens }))
+  app.use(recipientRouter({ accounts, tokens }))
   app.use(rateRouter({ rates, tokens }))
 
   /*
@@ -162,6 +164,7 @@ export function createApp({
   const ussd = new UssdAdapter({
     prisma,
     auth,
+    accounts,
     transfers,
     warn: (event, cause) => log.error({ event, err: cause }, "ussd"),
     ...(nowFn ? { now: () => new Date(nowFn()) } : {}),

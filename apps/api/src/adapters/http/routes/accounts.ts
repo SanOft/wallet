@@ -6,6 +6,7 @@ import {
   transferResponseSchema,
 } from "@wallet/shared"
 import { Router } from "express"
+import type { AccountService } from "../../../domain/AccountService.js"
 import { DomainError, ValidationError } from "../../../domain/errors.js"
 import type { TransferResult, TransferService } from "../../../domain/TransferService.js"
 import type { TokenService } from "../../../infra/jwt.js"
@@ -15,6 +16,7 @@ import { respond } from "../respond.js"
 
 export interface AccountRouterDependencies {
   readonly prisma: PrismaClient
+  readonly accounts: AccountService
   readonly transfers: TransferService
   readonly tokens: TokenService
 }
@@ -22,42 +24,34 @@ export interface AccountRouterDependencies {
 /**
  * `GET /api/accounts` and `POST /api/accounts/topup` (§12.1).
  */
-export function accountRouter({ prisma, transfers, tokens }: AccountRouterDependencies): Router {
+export function accountRouter({
+  prisma,
+  accounts,
+  transfers,
+  tokens,
+}: AccountRouterDependencies): Router {
   const router = Router()
 
   router.get("/api/accounts", requireAuth(tokens), async (req, res) => {
     const userId = req.userId
     if (!userId) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        phone: true,
-        firstName: true,
-        lastName: true,
-        // Only this user's own accounts, resolved through the token rather
-        // than an id in the request (FR-4.5).
-        accounts: { select: { id: true, currency: true, balance: true, type: true } },
-      },
-    })
-    if (!user) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
+    // Resolved through the token rather than an id in the request (FR-4.5).
+    const overview = await accounts.overview(userId)
+    if (!overview) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
 
     respond(res, 200, accountsResponseSchema, {
       // §12.2, §9.3: balances leave as strings. A BigInt has no JSON form, and
-      // one narrowed to a number loses precision above 2^53.
-      accounts: user.accounts.map((account) => ({
+      // one narrowed to a number loses precision above 2^53. Converting here
+      // rather than in the service keeps the domain in bigint, where the
+      // arithmetic has to happen.
+      accounts: overview.accounts.map((account) => ({
         id: account.id,
         currency: account.currency,
         balance: account.balance.toString(),
         type: account.type,
       })),
-      user: {
-        id: user.id,
-        phone: user.phone,
-        firstName: user.firstName,
-        lastName: user.lastName,
-      },
+      user: overview.user,
     })
   })
 

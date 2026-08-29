@@ -2,9 +2,8 @@ import { randomUUID } from "node:crypto"
 import type { PrismaClient } from "@prisma/client"
 import { DEMO_TOPUP_AMOUNT, maskRecipientName } from "@wallet/shared"
 import request from "supertest"
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
-import { resetLookupWindows } from "../src/adapters/http/routes/recipients.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
 import { isHealthy, reconcile } from "../src/infra/reconciliation.js"
 import { buildApp, testEnv } from "./helpers.js"
@@ -26,10 +25,6 @@ describe.skipIf(!hasDatabase)("day 5 — top-up, accounts and lookup", () => {
   afterAll(async () => {
     await prisma.$disconnect()
   })
-  beforeEach(() => {
-    resetLookupWindows()
-  })
-
   async function newUser(firstName = "Muhammadali", lastName = "Toshmatov") {
     const { app } = buildApp(prisma, { ...process.env })
     const phone = uniquePhone()
