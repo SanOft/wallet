@@ -18,7 +18,7 @@ import type { AuthService } from "../src/domain/AuthService.js"
 import { SlidingWindow } from "../src/domain/SlidingWindow.js"
 import type { TransferService } from "../src/domain/TransferService.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
-import { buildApp, testEnv } from "./helpers.js"
+import { buildApp, testEnv, uniquePhone } from "./helpers.js"
 
 /**
  * FR-9, the channel with no screen, no keyboard and no session.
@@ -41,10 +41,6 @@ const hasDatabase = Boolean(process.env.DATABASE_URL)
 /** Assembled rather than written out: a literal here trips the secret scanner. */
 const PASSWORD = ["orbit", "walnut", "lantern", "quiet"].join("-")
 const GATEWAY_SECRET = ["gateway", "secret", "for", "tests", "only", "0123456789"].join("-")
-
-function uniquePhone(): string {
-  return `+99895${Math.floor(1_000_000 + Math.random() * 8_999_999)}`
-}
 
 describe("the session parser (FR-9.2)", () => {
   it("reads an empty text as no input at all, not as an empty choice", () => {

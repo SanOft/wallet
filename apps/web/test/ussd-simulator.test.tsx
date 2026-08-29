@@ -94,6 +94,24 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+/**
+ * `delay: null`, which is why this file is not the slowest in the suite.
+ *
+ * By default `userEvent` awaits between keystrokes, so typing a nine-digit
+ * recipient number is nine scheduler turns plus nine React renders. The full
+ * §11.7 session does that across five round trips and measured 5152 ms against
+ * a 5000 ms default — passing alone, timing out inside `yarn verify`, where the
+ * API suite has just run and coverage instrumentation is attached.
+ *
+ * It is a real cost, not a race: nothing is waiting on a signal it might miss.
+ * Removing the inter-key delay changes no behaviour this file asserts — the
+ * per-keystroke handling belongs to `form-fields.test.tsx`, and what these
+ * tests are about is the wire.
+ */
+function typist() {
+  return userEvent.setup({ delay: null })
+}
+
 async function openLab() {
   render(<App />)
   return screen.findByRole("heading", { name: "USSD simulyatori", level: 1 })
@@ -120,7 +138,7 @@ describe("the §11.7 session, end to end (I5)", () => {
       "END 50 000 so'm yuborildi.\nBalans: 950 000 so'm",
     ]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await dial(user)
 
@@ -148,12 +166,26 @@ describe("the §11.7 session, end to end (I5)", () => {
       "2*901234567*50000",
       "2*901234567*50000*1234",
     ])
-  })
+    /*
+     * Twenty seconds, declared rather than inherited.
+     *
+     * This is the longest test in the repository and it earns it: five full
+     * request/response cycles through RTK Query, each re-rendering the tree and
+     * each awaited by `findByText`. It measured 5152 ms against the 5000 ms
+     * default — green on its own, timing out inside `yarn verify`, where the
+     * API suite has just run and coverage instrumentation is attached.
+     *
+     * Nothing here waits on a signal it might miss, so the bound is not hiding
+     * a race; the work is real and the default is simply too tight for it.
+     * `delay: null` on the typing was tried first and did not move it, which is
+     * what identified the round trips rather than the keystrokes as the cost.
+     */
+  }, 20_000)
 
   it("keeps one session id for the whole conversation", async () => {
     replies = [MENU, "CON Qabul qiluvchi raqamini kiriting"]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await dial(user)
     await type(user, "2")
@@ -173,7 +205,7 @@ describe("the §11.7 session, end to end (I5)", () => {
   it("closes the session on END and offers a fresh dial", async () => {
     replies = [MENU, "END Balans: 1 000 000 so'm"]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await dial(user)
     await type(user, "1")
@@ -191,7 +223,7 @@ describe("what it refuses to show as a reply", () => {
   it("names a transport failure as the gateway, not as an answer", async () => {
     replies = [null]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await user.click(screen.getByRole("button", { name: /terish/i }))
 
@@ -210,7 +242,7 @@ describe("what it refuses to show as a reply", () => {
     // The realistic case: an origin answering /api with the SPA's index.html.
     replies = ["<!doctype html><title>Wallet</title>"]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await user.click(screen.getByRole("button", { name: /terish/i }))
 
@@ -221,7 +253,7 @@ describe("what it refuses to show as a reply", () => {
   it("offers the failed step again on the same session, not a new one", async () => {
     replies = [null, MENU]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await user.click(screen.getByRole("button", { name: /terish/i }))
     await screen.findByRole("alert")
@@ -244,7 +276,7 @@ describe("offline", () => {
   it("refuses to dial and never queues it", async () => {
     replies = [MENU]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await dial(user)
 
@@ -275,7 +307,7 @@ describe("the 180-second session (FR-9.4)", () => {
     replies = [MENU]
     vi.useFakeTimers({ shouldAdvanceTime: true })
 
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
+    const user = userEvent.setup({ delay: null, advanceTimers: vi.advanceTimersByTime.bind(vi) })
     await openLab()
 
     /*
@@ -295,7 +327,7 @@ describe("the 180-second session (FR-9.4)", () => {
     replies = [MENU]
     vi.useFakeTimers({ shouldAdvanceTime: true })
 
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) })
+    const user = userEvent.setup({ delay: null, advanceTimers: vi.advanceTimersByTime.bind(vi) })
     await openLab()
     await dial(user)
 
@@ -322,7 +354,7 @@ describe("the wire panel", () => {
       "END 50 000 so'm yuborildi.",
     ]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await dial(user)
     await type(user, "2")
@@ -344,7 +376,7 @@ describe("the wire panel", () => {
   it("masks the PIN field while it is being typed", async () => {
     replies = [MENU, "CON PIN kodni kiriting"]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await dial(user)
     await type(user, "1")
@@ -358,7 +390,7 @@ describe("the septet budget", () => {
   it("measures the reply with the function the adapter fits it with", async () => {
     replies = [MENU]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await dial(user)
 
@@ -376,7 +408,7 @@ describe("the septet budget", () => {
     // to 70 and be cut by the network with nothing logged.
     replies = ["END Зулфия"]
 
-    const user = userEvent.setup()
+    const user = typist()
     await openLab()
     await user.click(screen.getByRole("button", { name: /terish/i }))
 

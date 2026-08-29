@@ -88,3 +88,25 @@ export function buildApp(
 export const PRISMA_STUB = {
   $queryRaw: async () => [{ migration_name: "00000000000000_stub" }],
 } as unknown as PrismaClient
+
+/**
+ * A phone number no other test in this run will produce.
+ *
+ * Counter-based, not random. `Math.random()` over seven digits is only
+ * *probably* unique, and P-17 recorded the consequence: the collision
+ * probability grows with every account a run creates, so the suite gets
+ * flakier the more it tests. It surfaced as
+ * `Unique constraint failed on the fields: (phone)` in a test that had nothing
+ * to do with registration.
+ *
+ * The prefix keeps two runs apart — the database is reset per run, but a
+ * developer pointing at a database that is not reset should not collide with
+ * yesterday either.
+ */
+const PHONE_RUN = Math.floor(Math.random() * 900 + 100)
+let phoneCounter = 0
+
+export function uniquePhone(): string {
+  phoneCounter += 1
+  return `+99893${PHONE_RUN}${String(phoneCounter).padStart(4, "0")}`
+}

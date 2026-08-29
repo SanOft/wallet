@@ -259,6 +259,41 @@ Postgres adds a round trip per query, and Render's free tier sleeps (P-27) — a
 cold start is not a slow response, it is a refused one, and no timing budget
 covers that.
 
+### When a migration fails against production
+
+`prisma migrate deploy` refuses to apply anything after a migration has failed
+on the target database (P3009). That is correct — the schema is in a state
+nobody planned — but it means one bad migration blocks every later one until a
+person clears the record.
+
+It happened once, and the cause is worth keeping:
+
+> `ERROR: permission denied to set parameter "session_replication_role"`
+
+The ledger invariants migration suspended the append-only trigger with a session
+parameter that requires **superuser**. It passed locally and in CI, because both
+run as superuser in a throwaway container, and failed on Neon, where the role is
+an owner and not a superuser. `ALTER TABLE ... DISABLE TRIGGER USER` needs only
+ownership and does the same job.
+
+**The lesson is not about that statement.** It is that a migration is tested
+against the privileges of the machine that runs it, and the deployed database
+grants fewer. `docs/runbook.md` cannot check that for you; a non-superuser role
+locally can:
+
+```bash
+psql -c "CREATE ROLE probe LOGIN PASSWORD '...' NOSUPERUSER"
+psql -c "CREATE DATABASE probe_db OWNER probe"
+DATABASE_URL=postgresql://probe:...@localhost:5434/probe_db   yarn workspace @wallet/api exec prisma migrate deploy
+```
+
+To clear a failed record, run the **Resolve a failed migration** workflow from
+the Actions tab with the directory name. It is `workflow_dispatch` only: a
+pipeline that resolved its own failures would turn a blocked deploy into a
+corrupted one. Use `rolled-back` unless you have checked the schema by hand —
+Prisma runs each migration in a transaction, so a failure normally leaves
+nothing behind.
+
 ### Checking it by hand
 
 `docs/smoke-plan.md` walks one person from registration through a USSD transfer
