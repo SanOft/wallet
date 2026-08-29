@@ -5,16 +5,41 @@ on:
   push:
     branches: [main]
 
+# Read-only, and stated rather than inherited (P-5). The default for a
+# repository can be write, which would hand every third-party action in this
+# file a token that can push to `main`. Nothing here needs to write anything.
+permissions:
+  contents: read
+
 jobs:
-  verify:
+  test:
     runs-on: ubuntu-latest
+    # A hung job otherwise occupies a runner for six hours, which is the
+    # default. Two minutes is the observed time; ten leaves room for a cold
+    # cache without leaving room for a hang.
+    timeout-minutes: 10
+
+    strategy:
+      # Both versions are reported. `fail-fast` would cancel the surviving job
+      # the moment one went red, which hides whether the break is version
+      # specific — the one question a matrix exists to answer.
+      fail-fast: false
+      matrix:
+        # `engines` claims `^22.0.0 || >=24.0.0` and only 22 was ever exercised
+        # (P-5), so half of that was a claim nothing checked. Public repository,
+        # so the two jobs run in parallel at no wall-clock cost.
+        node: [22, 24]
 
     # Integration tests run against a real database on every pull request
     # (spec §18.1). A mock would not exercise the CHECK constraints that hold
     # the ledger invariants, which is the half most worth testing.
     services:
       postgres:
-        image: postgres:17-alpine
+        # Pinned by digest, not by tag (P-3). `postgres:17-alpine` moves, so a
+        # run that was green in August is not reproducible in December — and
+        # the constraints and triggers this suite depends on are the database's
+        # behaviour, not ours. Digest for 17-alpine as of 2026-08-29.
+        image: postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
         env:
           POSTGRES_USER: wallet
           POSTGRES_PASSWORD: wallet
@@ -36,14 +61,20 @@ jobs:
       JWT_SECRET: ci-only-secret-not-used-anywhere-else-0123456789
 
     steps:
-      - uses: actions/checkout@v7
+      # Pinned by commit SHA rather than by tag (P-5). A tag is a mutable
+      # pointer somebody else controls: `v7` can be moved onto a different
+      # commit at any time, and this workflow holds a token and reads every
+      # file in the repository. The trailing comment is the human-readable
+      # version, and it is the only part a reader can check at a glance —
+      # Dependabot updates both together.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # gitleaks scans commit history, so a shallow clone would check only
           # the tip and report clean on a secret added two commits ago.
           fetch-depth: 0
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
       - run: corepack enable
       - run: yarn install --immutable
 
@@ -53,6 +84,17 @@ jobs:
 
       - run: yarn verify
       - run: yarn npm audit --all --recursive
+
+  # Its own job because it needs neither Node nor Postgres, and because running
+  # it inside the matrix would scan the same history once per Node version.
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
 
       # NFR-1.9 and 17.3 name gitleaks three times between them. Pinned by
       # digest rather than by tag: an image tag is mutable, and a secret
@@ -65,4 +107,35 @@ jobs:
       # which is the file documenting every production secret.
       - name: gitleaks
         run: |
-          docker run --rm -v "$PWD:/repo"             zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854             detect --source=/repo --config=/repo/.gitleaks.toml             --baseline-path=/repo/.gitleaks-baseline.json --redact --no-banner
+          docker run --rm -v "$PWD:/repo" \
+            zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 \
+            detect --source=/repo --config=/repo/.gitleaks.toml \
+            --baseline-path=/repo/.gitleaks-baseline.json --redact --no-banner
+
+  # The one name branch protection requires, and the reason it exists.
+  #
+  # Splitting `verify` into a matrix renamed its checks to `verify (22)` and
+  # `verify (24)`, so the required check `verify` stopped reporting entirely and
+  # every pull request became permanently unmergeable. Requiring the matrix legs
+  # by name instead would move the problem rather than fix it: adding Node 26
+  # later, or dropping 22, silently drops a required check again and the rule
+  # would have to be edited in the repository settings, where nothing in this
+  # repository can see it.
+  #
+  # An aggregate keeps one stable contract with branch protection while the jobs
+  # behind it change freely.
+  verify:
+    needs: [test, secrets]
+    # `always()`, because a job whose dependency failed is *skipped*, and a
+    # skipped required check is not a failed one — which would make this gate
+    # pass by not running.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: every job succeeded
+        run: |
+          echo "test=${{ needs.test.result }} secrets=${{ needs.secrets.result }}"
+          [ "${{ needs.test.result }}" = "success" ] || exit 1
+          [ "${{ needs.secrets.result }}" = "success" ] || exit 1

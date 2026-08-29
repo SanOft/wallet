@@ -1,0 +1,19 @@
+version: 2
+
+updates:
+  # The other half of pinning actions by SHA (P-5).
+  #
+  # A pin without an updater is not security, it is a freeze: the workflow keeps
+  # running whatever `actions/checkout` looked like on the day somebody pasted
+  # the hash, including its vulnerabilities, and nothing ever says so. Dependabot
+  # rewrites the SHA *and* the `# v7` comment beside it, which is what makes that
+  # comment trustworthy rather than decorative.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # One pull request per week at most, so a pinned workflow does not become a
+    # reason to stop reading pull requests.
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
