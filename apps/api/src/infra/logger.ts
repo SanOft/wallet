@@ -70,6 +70,16 @@ interface IncomingLike {
   readonly method?: string
   readonly url?: string
   readonly originalUrl?: string
+  /**
+   * The Express request, which is not what this serializer is handed.
+   *
+   * pino-http passes a wrapper carrying `id`, `method`, `url` and `headers` —
+   * so `req.traceId`, set by our own middleware on the Express request, is
+   * simply absent here. That is easy to miss because the wrapper has enough of
+   * the same fields to look like the real thing: `url` resolves, and only the
+   * property nobody else sets comes back undefined.
+   */
+  readonly raw?: { readonly traceId?: unknown }
 }
 
 /**
@@ -81,6 +91,8 @@ interface IncomingLike {
  * The field is named `requestId` rather than pino-http's `id` so that one query
  * finds every line about a request — the response header, the error envelope
  * and the access log now agree on the name (E7, NFR-5.1).
+ *
+ * `traceId` sits beside it and is the one to trust. See `requestId.ts`.
  */
 export function serializeRequest(req: IncomingLike): Record<string, unknown> {
   const raw = req.originalUrl ?? req.url ?? ""
@@ -96,6 +108,13 @@ export function serializeRequest(req: IncomingLike): Record<string, unknown> {
   }
 
   return {
+    /*
+     * Both, and the order is the point. `traceId` is minted by the server and
+     * cannot be set by the caller (P-24); `requestId` is whatever the caller
+     * asked to be called, which is useful for answering them and is not
+     * evidence. A query that has to be right uses `traceId`.
+     */
+    traceId: req.raw?.traceId,
     requestId: req.id,
     method: req.method,
     // Path only. The query is reported separately, allowlisted by key.

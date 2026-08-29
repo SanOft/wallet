@@ -87,7 +87,12 @@ function bodyParserCode(err: unknown): ApiErrorCode | undefined {
  * closed. Such issues are dropped and reported at `warn` so the schema is
  * fixed — but see `field.required` below for why the response is never empty.
  */
-function toFieldIssues(error: z.ZodError, log: Logger, requestId: string): FieldIssue[] {
+function toFieldIssues(
+  error: z.ZodError,
+  log: Logger,
+  requestId: string,
+  traceId: string,
+): FieldIssue[] {
   const mapped: FieldIssue[] = []
 
   for (const issue of error.issues) {
@@ -96,7 +101,7 @@ function toFieldIssues(error: z.ZodError, log: Logger, requestId: string): Field
       mapped.push({ path: issue.path.map(String), code: code.data })
     } else {
       log.warn(
-        { requestId, path: issue.path.map(String), zodCode: issue.code },
+        { traceId, requestId, path: issue.path.map(String), zodCode: issue.code },
         "Zod issue carries no field error code; the schema is missing an `error` value",
       )
       // The client is told VALIDATION_ERROR means "shown under the field". An
@@ -140,6 +145,13 @@ export function createErrorHandler(log: Logger): ErrorRequestHandler {
     }
 
     const requestId = req.requestId ?? "unknown"
+    /*
+     * The caller's id goes in the envelope, so they can quote it back.
+     * The server's goes in the log, because that is the one a
+     * repudiation claim is checked against and the caller cannot choose
+     * it (P-24).
+     */
+    const traceId = req.traceId ?? "unknown"
     const framework = bodyParserCode(err)
 
     let code: ApiErrorCode
@@ -149,7 +161,7 @@ export function createErrorHandler(log: Logger): ErrorRequestHandler {
     if (err instanceof z.ZodError) {
       code = "VALIDATION_ERROR"
       message = FALLBACK_MESSAGE.VALIDATION_ERROR
-      details = toFieldIssues(err, log, requestId)
+      details = toFieldIssues(err, log, requestId, traceId)
     } else if (isNotFound(err)) {
       code = "NOT_FOUND"
       message = FALLBACK_MESSAGE.NOT_FOUND
@@ -158,7 +170,7 @@ export function createErrorHandler(log: Logger): ErrorRequestHandler {
       // not an incident and must not page anyone.
       code = framework
       message = FALLBACK_MESSAGE[framework]
-      log.info({ requestId, code, method: req.method }, "rejected a malformed request")
+      log.info({ traceId, requestId, code, method: req.method }, "rejected a malformed request")
     } else if (isDomainError(err)) {
       code = err.code
       message = err.message || FALLBACK_MESSAGE[err.code]
@@ -180,7 +192,10 @@ export function createErrorHandler(log: Logger): ErrorRequestHandler {
       // beyond the correlation id (NFR-5.1, NFR-5.2).
       code = "INTERNAL"
       message = FALLBACK_MESSAGE.INTERNAL
-      log.error({ requestId, err, method: req.method }, "Unhandled error while serving request")
+      log.error(
+        { traceId, requestId, err, method: req.method },
+        "Unhandled error while serving request",
+      )
     }
 
     const body: ApiError = {
