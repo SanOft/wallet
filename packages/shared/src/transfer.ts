@@ -92,8 +92,48 @@ export const accountSchema = z.object({
   type: z.enum(["USER", "TREASURY"]),
 })
 
+/**
+ * What is left of FR-6.1's daily allowance, on the channel this client uses.
+ *
+ * 13.5 asks the amount step to show it, and F4 shipped without it because
+ * nothing served it: the only client-side route to a figure is summing today's
+ * outgoing transfers out of a paged history, which is right until somebody
+ * makes more transfers in a day than one page holds and silently wrong after
+ * that (P-32). A wrong allowance on a money screen is worse than an absent one.
+ *
+ * **A rolling twenty-four hours, not a calendar day**, because that is what the
+ * server enforces — the limit check compares against `now - 24h`. A display
+ * that reset at midnight would disagree with the refusal the user then
+ * received, and that number would be worse than useless: authoritative-looking
+ * and wrong.
+ */
+export const dailyAllowanceSchema = z.object({
+  /*
+   * `z.string()`, not `moneySchema`, and the difference is not cosmetic.
+   * `moneySchema` is an *inbound* parser: it transforms to `bigint`, so a
+   * response schema built from it validates fine and then hands `respond` an
+   * object `JSON.stringify` refuses — a 500 on the balance screen. Every other
+   * outbound amount here is a plain string for the same reason (12.2).
+   */
+  /** FR-6.1's ceiling for this channel. Minor units as a string (12.2). */
+  limit: z.string(),
+  /** Completed outgoing transfers on this channel in the last 24 hours. */
+  spent: z.string(),
+  /** `limit - spent`, floored at zero. Never negative, even after a limit change. */
+  remaining: z.string(),
+})
+export type DailyAllowance = z.infer<typeof dailyAllowanceSchema>
+
 export const accountsResponseSchema = z.object({
   accounts: z.array(accountSchema),
+  /**
+   * The web channel's limits, because this response is what the web reads.
+   * USSD gets its own from the adapter, which has no screen to put them on.
+   */
+  limits: z.object({
+    perOperation: z.string(),
+    daily: dailyAllowanceSchema,
+  }),
   user: z.object({
     id: z.string(),
     phone: z.string(),
@@ -213,7 +253,26 @@ export const historyItemSchema = z.object({
   channel: transferChannelSchema,
   direction: transferDirectionSchema,
   amount: z.string(),
-  counterparty: z.object({ maskedName: z.string() }).nullable(),
+  counterparty: z
+    .object({
+      maskedName: z.string(),
+      /**
+       * Present only on a transfer this user sent (P-36).
+       *
+       * 13.5 asks for a recent-recipients quick pick, and a pick that cannot
+       * fill the number field is a label. The masked name is deliberately not
+       * enough to find somebody with — that is what FR-4.6 buys — so the list
+       * needs the number itself.
+       *
+       * Outgoing only, and that is the whole disclosure argument: the user
+       * typed this number, so returning it tells them nothing they did not
+       * already have. On an *incoming* transfer the sender's number would be
+       * new information about somebody who only chose to pay, so it stays
+       * null and the row keeps its masked name.
+       */
+      phone: z.string().nullable(),
+    })
+    .nullable(),
 })
 export type HistoryItem = z.infer<typeof historyItemSchema>
 

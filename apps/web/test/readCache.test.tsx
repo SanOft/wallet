@@ -32,6 +32,10 @@ const HOUR_MS = 60 * 60 * 1000
 const ACCOUNTS = {
   accounts: [{ id: "a1", currency: "UZS", balance: "125000000", type: "USER" }],
   user: { id: "u1", phone: "+998901234567", firstName: "Alisher", lastName: "Navoiy" },
+  limits: {
+    perOperation: "1000000000",
+    daily: { limit: "3000000000", spent: "0", remaining: "3000000000" },
+  },
 }
 
 const HISTORY = { items: [], nextCursor: null }

@@ -88,6 +88,10 @@ const FIXTURES: Readonly<Record<string, unknown>> = {
   "/api/accounts": {
     accounts: [{ id: "a1", currency: "UZS", balance: "100000000", type: "USER" }],
     user: { id: "u1", phone: "+998901234567", firstName: "Alisher", lastName: "Navoiy" },
+    limits: {
+      perOperation: "1000000000",
+      daily: { limit: "3000000000", spent: "0", remaining: "3000000000" },
+    },
   },
   "/api/transfers": { items: [], nextCursor: null },
   "/api/rates": {

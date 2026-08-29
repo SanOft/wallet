@@ -6,6 +6,7 @@ import { FormField } from "../../components/FormField.js"
 import { PhoneInput } from "../../components/PhoneInput.js"
 import { messageFor } from "../../lib/fieldErrors.js"
 import { useLazyLookupRecipientQuery } from "./api.js"
+import { RecentRecipients } from "./RecentRecipients.js"
 import { recipientChosen } from "./transferSlice.js"
 
 /**
@@ -72,6 +73,24 @@ export function RecipientStep() {
           />
         )}
       </FormField>
+
+      {/*
+        13.5 step 1 asks for this beside the lookup, and it was the one part of
+        that rule F4 left out. Placed under the field rather than above it: the
+        number is what somebody came here to type, and a list of three is a
+        shortcut rather than the primary path.
+      */}
+      <RecentRecipients
+        onPick={(picked) => {
+          setPhone(picked)
+          setTouched(true)
+          if (found) result.reset()
+          // Looked up immediately. A pick that only fills the box leaves the
+          // person to press Search on a number they did not type, which is a
+          // step the shortcut exists to remove.
+          void lookup(picked)
+        }}
+      />
 
       <button
         type="button"

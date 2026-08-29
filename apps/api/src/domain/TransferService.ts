@@ -221,6 +221,28 @@ export class TransferService {
     this.#now = now
   }
 
+  /**
+   * What is left of the daily allowance on a channel (FR-6.1, P-32).
+   *
+   * The wizard shows this before the user commits to an amount. It reads
+   * through `spentOnChannel`, which is the same function the refusal path
+   * uses — the figure on screen and the rule that would reject the transfer
+   * are one definition, not two that agree.
+   *
+   * `remaining` is floored at zero rather than allowed to go negative. A
+   * lowered limit can leave somebody already over it, and "-2 000 000 so'm
+   * remaining" is not a sentence a screen should have to render.
+   */
+  async dailyAllowance(
+    accountId: string,
+    channel: TransferChannel,
+  ): Promise<{ limit: bigint; spent: bigint; remaining: bigint }> {
+    const limit = CHANNEL_LIMITS[channel].daily
+    const spent = await spentOnChannel(this.#prisma, accountId, channel, this.#now())
+
+    return { limit, spent, remaining: spent >= limit ? 0n : limit - spent }
+  }
+
   async execute(input: TransferInput): Promise<TransferResult> {
     const requestHash = hashTransferRequest(input)
 
@@ -959,20 +981,15 @@ export class TransferService {
       throw new LimitExceededError([{ path: ["amount"], code: "limit.per_operation" }])
     }
 
-    const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-
-    // FR-6.1, daily. Only COMPLETED transfers count — a refused attempt moved
-    // no money and must not consume someone's allowance.
-    const spentToday = await tx.transfer.aggregate({
-      where: {
-        fromAccountId: senderAccountId,
-        channel: input.channel,
-        status: "COMPLETED",
-        createdAt: { gte: dayAgo },
-      },
-      _sum: { amount: true },
-    })
-    if ((spentToday._sum.amount ?? 0n) + input.amount > limits.daily) {
+    /*
+     * The same query the wizard's allowance figure comes from (P-32), rather
+     * than a second one that agrees today. A display keyed on a calendar day
+     * while the refusal keys on a rolling window is a screen that promises an
+     * allowance and a server that declines it — and the user has no way to
+     * tell which of the two is lying.
+     */
+    const spent = await spentOnChannel(tx, senderAccountId, input.channel, now)
+    if (spent + input.amount > limits.daily) {
       throw new LimitExceededError([{ path: ["amount"], code: "limit.daily" }])
     }
 
@@ -1093,8 +1110,38 @@ function parseOutcome(stored: Prisma.JsonValue): StoredOutcome | null {
   }
 }
 
+/**
+ * FR-6.1's daily window, defined once (P-32).
+ *
+ * Rolling twenty-four hours rather than a calendar day, per channel, counting
+ * only COMPLETED transfers — a refused attempt moved no money and must not
+ * consume somebody's allowance. Every one of those four decisions has to be
+ * the same for the check and for the figure on screen, which is why there is
+ * one function rather than two queries that look alike.
+ */
+async function spentOnChannel(
+  client: Pick<PrismaClient, "transfer">,
+  accountId: string,
+  channel: TransferChannel,
+  now: Date,
+): Promise<bigint> {
+  const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+
+  const spent = await client.transfer.aggregate({
+    where: {
+      fromAccountId: accountId,
+      channel,
+      status: "COMPLETED",
+      createdAt: { gte: dayAgo },
+    },
+    _sum: { amount: true },
+  })
+
+  return spent._sum.amount ?? 0n
+}
+
 /** The counterparty fields, named once so both sides of a transfer agree. */
-const PARTY = { select: { firstName: true, lastName: true } } as const
+const PARTY = { select: { firstName: true, lastName: true, phone: true } } as const
 
 /**
  * A page position, encoded so it cannot be read as an invitation to edit it.
@@ -1138,6 +1185,8 @@ interface TransferRow {
 interface Party {
   readonly firstName: string
   readonly lastName: string
+  /** Selected for P-36's quick pick, and returned only on an outgoing row. */
+  readonly phone: string
 }
 
 /**
@@ -1169,6 +1218,18 @@ function toHistoryRow(transfer: TransferRow, mine: readonly string[]): HistoryRo
     counterparty:
       other.type === "TREASURY"
         ? null
-        : { maskedName: maskRecipientName(other.user.firstName, other.user.lastName) },
+        : {
+            maskedName: maskRecipientName(other.user.firstName, other.user.lastName),
+            /*
+             * Outgoing only (P-36). The number is returned so 13.5's quick pick
+             * can fill the field it exists to fill, and it costs nothing here
+             * because the user typed it themselves.
+             *
+             * On an incoming transfer it stays null. The sender's number would
+             * be new information about somebody whose only act was to pay, and
+             * the masked name is what FR-4.6 decided that row should carry.
+             */
+            phone: outgoing ? other.user.phone : null,
+          },
   }
 }

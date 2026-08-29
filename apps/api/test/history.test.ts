@@ -138,11 +138,36 @@ describe.skipIf(!hasDatabase)("FR-5 — transaction history", () => {
 
       const row = (await history(sender)).body.items[0]
 
-      // Not the surname, and not the phone number: FR-4.9 pays for this mask
-      // on the lookup endpoint, and a different rule here would return what it
-      // withholds.
+      // FR-4.9 pays for this mask on the lookup endpoint, and a different rule
+      // here would return what it withholds. What it withholds is the surname.
       expect(row.counterparty.maskedName).not.toContain("Karimova")
-      expect(JSON.stringify(row)).not.toContain(recipient.phone)
+    })
+
+    it("returns the number on a row the user sent, and only there", async () => {
+      /*
+       * P-36. This assertion used to be "no phone number anywhere", which was
+       * the right instinct and the wrong rule: the lookup masks the *surname*,
+       * and it never withheld the number, because the caller is the one who
+       * supplies it. Returning somebody their own typing is not a disclosure,
+       * and 13.5's quick pick cannot fill the number field without it.
+       *
+       * The half that does matter is below, and the old assertion never
+       * reached it: the recipient never had the sender's number, so on their
+       * copy of the same transfer it stays null.
+       */
+      const sender = await newUser("Alisher", "Navoiy")
+      const recipient = await newUser("Zulfiya", "Karimova")
+      await topup(sender)
+      await send(sender, recipient, "100000")
+
+      const sent = (await history(sender)).body.items[0]
+      expect(sent.direction).toBe("outgoing")
+      expect(sent.counterparty.phone).toBe(recipient.phone)
+
+      const received = (await history(recipient)).body.items[0]
+      expect(received.direction).toBe("incoming")
+      expect(received.counterparty.phone, "the sender's number was disclosed").toBeNull()
+      expect(JSON.stringify(received)).not.toContain(sender.phone)
     })
   })
 

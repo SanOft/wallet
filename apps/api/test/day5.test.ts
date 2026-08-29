@@ -221,6 +221,61 @@ describe.skipIf(!hasDatabase)("day 5 — top-up, accounts and lookup", () => {
     })
   })
 
+  describe("the daily allowance (FR-6.1, P-32)", () => {
+    it("reports what is left, from the same rule that would refuse the transfer", async () => {
+      /*
+       * 13.5 asks the amount step to show this and F4 shipped without it,
+       * because the only client-side route to a figure was summing a paged
+       * history — right until somebody exceeds one page in a day, and silently
+       * wrong after that.
+       */
+      const user = await newUser()
+
+      const before = await request(user.app)
+        .get("/api/accounts")
+        .set("authorization", `Bearer ${user.token}`)
+
+      expect(before.status).toBe(200)
+      expect(before.body.limits.daily.spent).toBe("0")
+      expect(before.body.limits.daily.remaining).toBe(before.body.limits.daily.limit)
+
+      const target = await newUser()
+      await request(user.app)
+        .post("/api/accounts/topup")
+        .set("authorization", `Bearer ${user.token}`)
+        .set("idempotency-key", randomUUID())
+        .send()
+      await request(user.app)
+        .post("/api/transfers")
+        .set("authorization", `Bearer ${user.token}`)
+        .set("idempotency-key", randomUUID())
+        .send({ phone: target.phone, amount: "300000" })
+
+      const after = await request(user.app)
+        .get("/api/accounts")
+        .set("authorization", `Bearer ${user.token}`)
+
+      // The transfer counted; the top-up did not, because a top-up is not an
+      // outgoing transfer from this account.
+      expect(after.body.limits.daily.spent).toBe("300000")
+      expect(BigInt(after.body.limits.daily.remaining)).toBe(
+        BigInt(after.body.limits.daily.limit) - 300_000n,
+      )
+    })
+
+    it("never reports a negative allowance", async () => {
+      // A lowered limit can leave somebody already over it, and
+      // "-2 000 000 so'm remaining" is not a sentence a screen should render.
+      const user = await newUser()
+
+      const res = await request(user.app)
+        .get("/api/accounts")
+        .set("authorization", `Bearer ${user.token}`)
+
+      expect(BigInt(res.body.limits.daily.remaining)).toBeGreaterThanOrEqual(0n)
+    })
+  })
+
   describe("recipient lookup (FR-4.9)", () => {
     it("returns a masked name on an exact match", async () => {
       const caller = await newUser()

@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client"
 import {
   accountsResponseSchema,
+  CHANNEL_LIMITS,
   idempotencyKeySchema,
   topUpRequestSchema,
   transferResponseSchema,
@@ -40,6 +41,19 @@ export function accountRouter({
     const overview = await accounts.overview(userId)
     if (!overview) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
 
+    /*
+     * From `TransferService`, not recomputed here (P-32). The figure the wizard
+     * shows and the rule that would refuse the transfer are the same function,
+     * so a screen cannot promise an allowance the server then declines.
+     *
+     * WEB because this response is what the web reads. The USSD channel has its
+     * own ceiling and no screen to put it on.
+     */
+    const usable = overview.accounts.find((account) => account.type === "USER")
+    const daily = usable
+      ? await transfers.dailyAllowance(usable.id, "WEB")
+      : { limit: CHANNEL_LIMITS.WEB.daily, spent: 0n, remaining: CHANNEL_LIMITS.WEB.daily }
+
     respond(res, 200, accountsResponseSchema, {
       // §12.2, §9.3: balances leave as strings. A BigInt has no JSON form, and
       // one narrowed to a number loses precision above 2^53. Converting here
@@ -52,6 +66,14 @@ export function accountRouter({
         type: account.type,
       })),
       user: overview.user,
+      limits: {
+        perOperation: CHANNEL_LIMITS.WEB.perOperation.toString(),
+        daily: {
+          limit: daily.limit.toString(),
+          spent: daily.spent.toString(),
+          remaining: daily.remaining.toString(),
+        },
+      },
     })
   })
 

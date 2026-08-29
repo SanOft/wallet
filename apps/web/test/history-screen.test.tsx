@@ -22,6 +22,10 @@ import { giveSessionHint } from "./renderApp.js"
 const ACCOUNTS = {
   accounts: [{ id: "a1", currency: "UZS", balance: "500000000", type: "USER" }],
   user: { id: "u1", phone: "+998901234567", firstName: "Alisher", lastName: "Navoiy" },
+  limits: {
+    perOperation: "1000000000",
+    daily: { limit: "3000000000", spent: "0", remaining: "3000000000" },
+  },
 }
 
 function item(over: Partial<Record<string, unknown>> = {}) {
@@ -33,7 +37,7 @@ function item(over: Partial<Record<string, unknown>> = {}) {
     channel: "WEB",
     direction: "outgoing",
     amount: "500000",
-    counterparty: { maskedName: "ZULFIYA K." },
+    counterparty: { maskedName: "ZULFIYA K.", phone: "+998907654321" },
     ...over,
   }
 }
@@ -186,8 +190,18 @@ describe("the filters (FR-5.2)", () => {
 describe("paging (FR-5.1)", () => {
   it("adds the next page rather than replacing what is on screen", async () => {
     pages = [
-      { items: [item({ id: "t1", counterparty: { maskedName: "ZULFIYA K." } })], nextCursor: "c1" },
-      { items: [item({ id: "t2", counterparty: { maskedName: "ALISHER N." } })], nextCursor: null },
+      {
+        items: [
+          item({ id: "t1", counterparty: { maskedName: "ZULFIYA K.", phone: "+998907654321" } }),
+        ],
+        nextCursor: "c1",
+      },
+      {
+        items: [
+          item({ id: "t2", counterparty: { maskedName: "ALISHER N.", phone: "+998907654321" } }),
+        ],
+        nextCursor: null,
+      },
     ]
     await showHistory()
     await screen.findByText("ZULFIYA K.")
