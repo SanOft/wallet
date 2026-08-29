@@ -620,6 +620,63 @@ describe.skipIf(!hasDatabase)("the gateway door (FR-9.1)", () => {
     expect(res.text).toMatch(/^CON /)
   })
 
+  it("does not spend one subscriber's budget on another (P-33)", async () => {
+    /*
+     * The failure this replaces: a carrier gateway is one address serving a
+     * whole network, and the global budget is 300 requests per quarter hour per
+     * address. A four-step session is four requests, so about seventy-five
+     * sessions took the allowance away from everybody behind that gateway.
+     *
+     * Fifty callbacks from fifty different numbers, all from one address. Under
+     * the address-keyed budget this is fine and only because fifty is under
+     * three hundred; what makes it a real check is that the per-subscriber
+     * budget is forty, so if the key were still the address these would start
+     * failing at forty-one.
+     */
+    const { app } = buildApp(prisma, { ...process.env, USSD_GATEWAY_SECRET: GATEWAY_SECRET })
+    const agent = request.agent(app)
+
+    for (let i = 0; i < 50; i++) {
+      const res = await agent
+        .post("/api/channels/ussd")
+        .set("x-gateway-secret", GATEWAY_SECRET)
+        .send({ ...callback(), phoneNumber: `+99890000${String(1000 + i)}` })
+
+      expect(res.status, `subscriber ${i + 1} of 50`).toBe(200)
+      expect(res.text, `subscriber ${i + 1} of 50`).toMatch(/^CON /)
+    }
+  }, 60_000)
+
+  it("ends the session in USSD when one subscriber is throttled, never in JSON", async () => {
+    /*
+     * `sendReply` returns 200 even for a refusal because a gateway reads a
+     * non-2xx as a failed session and shows the subscriber its own error
+     * instead of ours. A limiter answering 429 with the §12.3 envelope breaks
+     * exactly that, and puts a developer's JSON on a handset.
+     */
+    const { app } = buildApp(prisma, { ...process.env, USSD_GATEWAY_SECRET: GATEWAY_SECRET })
+    const agent = request.agent(app)
+    const phone = "+998900001111"
+
+    const replies: string[] = []
+    for (let i = 0; i < 45; i++) {
+      const res = await agent
+        .post("/api/channels/ussd")
+        .set("x-gateway-secret", GATEWAY_SECRET)
+        .send({ ...callback(), phoneNumber: phone })
+
+      // Every answer, throttled or not, is a 200 carrying a USSD line.
+      expect(res.status, `request ${i + 1}`).toBe(200)
+      expect(res.text, `request ${i + 1}`).toMatch(/^(CON|END) /)
+      expect(res.text, `request ${i + 1}`).not.toContain("RATE_LIMITED")
+      replies.push(res.text)
+    }
+
+    // And the budget is real: forty-five requests from one number must have
+    // reached it, or this test would pass with no limiter at all.
+    expect(replies.some((text) => text.startsWith("END Xizmat band"))).toBe(true)
+  }, 60_000)
+
   it("refuses a caller with the wrong secret", async () => {
     const { app } = buildApp(prisma, { ...process.env, USSD_GATEWAY_SECRET: GATEWAY_SECRET })
     const res = await request(app)

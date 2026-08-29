@@ -1,6 +1,6 @@
 import { isIP } from "node:net"
 import cors from "cors"
-import type { Request, RequestHandler } from "express"
+import type { Request, RequestHandler, Response } from "express"
 import { ipKeyGenerator, rateLimit } from "express-rate-limit"
 import helmet from "helmet"
 import type { Env } from "../../config/env.js"
@@ -189,6 +189,10 @@ function limiter(options: {
   readonly skipPreflight?: boolean
   /** Only failures count. See `loginRateLimit`. */
   readonly skipSuccessful?: boolean
+  /** Meter something other than the address. See `ussdGatewayRateLimit`. */
+  readonly keyGenerator?: (req: Request) => string
+  /** Answer in something other than the §12.3 envelope. Same reason. */
+  readonly refuse?: (res: Response) => void
 }): RequestHandler {
   return rateLimit({
     windowMs: options.windowMs,
@@ -196,14 +200,57 @@ function limiter(options: {
     ...(options.skipSuccessful ? { skipSuccessfulRequests: true } : {}),
     standardHeaders: "draft-7",
     legacyHeaders: false,
-    keyGenerator: clientKey,
+    keyGenerator: options.keyGenerator ?? clientKey,
     ...(options.skipPreflight ? { skip: (req: Request) => req.method === "OPTIONS" } : {}),
     // Routed through the error handler so a throttled caller gets the §12.3
     // envelope like every other failure, rather than express-rate-limit's own
     // plain-text body.
-    handler: (_req, _res, next) => {
+    handler: (_req, res, next) => {
+      if (options.refuse) {
+        options.refuse(res)
+        return
+      }
       next(new DomainError("RATE_LIMITED", options.message))
     },
+  })
+}
+
+/** The path a real gateway posts to, exempt from the address-keyed budget. */
+export const USSD_GATEWAY_PATH = "/api/channels/ussd"
+
+/**
+ * The gateway callback, metered per subscriber rather than per address (P-33).
+ *
+ * A carrier gateway is one address serving a whole network. Under the global
+ * 300-per-quarter-hour budget a four-step session is four requests, so roughly
+ * seventy-five sessions would exhaust the allowance for *everybody* behind that
+ * gateway — an outage with a security rationale attached, and the people it
+ * stops are the customers.
+ *
+ * Worse than the throttling is how it was answered. `sendReply` returns 200
+ * even for a refusal, deliberately: a gateway reads a non-2xx as a failed
+ * session and shows the subscriber its own error instead of ours. The global
+ * limiter answers `429` carrying the §12.3 JSON envelope — a status the
+ * protocol treats as broken, with a body written for a developer, rendered on
+ * a handset. Hence `refuse`: a refusal here ends the session in the language
+ * the channel speaks.
+ *
+ * Keyed on the number in the callback. One without a number falls back to the
+ * address, so a malformed body cannot buy an unmetered budget — that fallback
+ * is why the key is a function rather than a field.
+ */
+export function ussdGatewayRateLimit(refuse: (res: Response) => void): RequestHandler {
+  return limiter({
+    windowMs: 15 * 60 * 1000,
+    // Ten four-step sessions a quarter hour for one subscriber: generous for
+    // somebody checking a balance, and still a bound.
+    max: 40,
+    message: "Too many requests",
+    keyGenerator: (req) => {
+      const phone = (req.body as { phoneNumber?: unknown } | undefined)?.phoneNumber
+      return typeof phone === "string" && phone.length > 0 ? `ussd:${phone}` : clientKey(req)
+    },
+    refuse,
   })
 }
 

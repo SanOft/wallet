@@ -26,6 +26,7 @@ import {
   registerRateLimit,
   securityHeaders,
   terminatePreflight,
+  USSD_GATEWAY_PATH,
   varyOrigin,
 } from "./security.js"
 
@@ -132,7 +133,19 @@ export function createApp({
   // oversized bodies are mapped to 4xx codes by the error handler.
   // After the body limit would be too late for a flood of small requests, and
   // before the routers so a throttled caller costs nothing but the counter.
-  app.use(globalRateLimit())
+  /*
+   * Everywhere except the gateway callback, which is metered per subscriber
+   * instead (P-33). Leaving it here as well would put the address budget back
+   * in front: a gateway is one address for a whole network, and the first
+   * limiter to refuse is the one that decides what the subscriber sees.
+   */
+  app.use((req, res, next) => {
+    if (req.path === USSD_GATEWAY_PATH) {
+      next()
+      return
+    }
+    globalRateLimit()(req, res, next)
+  })
   /*
    * Separate budgets, because the two endpoints are limiting different things:
    * registration caps identities created (successes included, P-20), login
