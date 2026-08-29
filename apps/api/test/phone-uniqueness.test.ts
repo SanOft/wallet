@@ -61,6 +61,21 @@ describe("the test suite cannot mint the same phone twice", () => {
     expect(phone).toHaveLength(13)
   })
 
+  it("cannot collide with a seeded account", () => {
+    /*
+     * The seeded numbers are `88…` and the system account is `000000000`;
+     * every minted one starts with `9`, so the two sets cannot meet. That is
+     * currently a property of the format rather than a promise, which is the
+     * kind of thing a later format change breaks silently — a minted number
+     * landing on a demo account would fail registration in whichever file drew
+     * it, exactly the failure this file exists to prevent.
+     */
+    const seeded = ["+998884615500", "+998884625500", "+998000000000"]
+    const minted = Array.from({ length: 200 }, () => uniquePhone())
+
+    expect(minted.filter((phone) => seeded.includes(phone))).toEqual([])
+  })
+
   it("does not repeat within a file", () => {
     const minted = new Set(Array.from({ length: 500 }, () => uniquePhone()))
 
