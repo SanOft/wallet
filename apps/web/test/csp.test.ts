@@ -33,7 +33,7 @@ import { describe, expect, it } from "vitest"
  * inline styles applied and report no violations.
  */
 
-const POLICY: string = (() => {
+const DOCUMENT_HEADERS: Readonly<Record<string, string>> = (() => {
   const path = fileURLToPath(new URL("../vercel.json", import.meta.url))
   const config = JSON.parse(readFileSync(path, "utf8")) as {
     headers: { source: string; headers: { key: string; value: string }[] }[]
@@ -48,9 +48,10 @@ const POLICY: string = (() => {
   // two policies on one response is a merge nobody intended.
   expect(entry.source).toBe("/((?!api/).*)")
 
-  const header = entry.headers.find((h) => h.key === "Content-Security-Policy")
-  return header?.value ?? ""
+  return Object.fromEntries(entry.headers.map((h) => [h.key, h.value]))
 })()
+
+const POLICY: string = DOCUMENT_HEADERS["Content-Security-Policy"] ?? ""
 
 function directive(name: string): string | undefined {
   return POLICY.split(";")
@@ -112,6 +113,36 @@ describe("the document origin's CSP (P-23)", () => {
     for (const part of POLICY.split(";").map((p) => p.trim())) {
       if (part.startsWith("img-src")) continue
       expect(part, `wildcard in: ${part}`).not.toMatch(/\s\*|\shttps:|\sdata:/)
+    }
+  })
+})
+
+describe("the rest of the document origin's headers", () => {
+  /*
+   * Left out of the CSP change deliberately and recorded as a gap, on the
+   * grounds that a diff should be about one thing. This is the follow-up:
+   * the API has had these since B5 through helmet, and the origin that serves
+   * the documents — and holds the access token — had none of them.
+   */
+  it("refuses MIME sniffing", () => {
+    // A chunk served with the wrong content type is a chunk a browser may
+    // decide to execute. `default-src 'none'` does not cover that.
+    expect(DOCUMENT_HEADERS["X-Content-Type-Options"]).toBe("nosniff")
+  })
+
+  it("sends no referrer, matching the API", () => {
+    /*
+     * `no-referrer`, the same value helmet sets on the API. A wallet's paths
+     * carry transfer ids (`/history/:id`), and a weaker policy leaks them to
+     * whatever a user navigates to next.
+     */
+    expect(DOCUMENT_HEADERS["Referrer-Policy"]).toBe("no-referrer")
+  })
+
+  it("denies the device APIs this application never asks for", () => {
+    const policy = DOCUMENT_HEADERS["Permissions-Policy"] ?? ""
+    for (const feature of ["camera", "geolocation", "microphone", "payment", "usb"]) {
+      expect(policy, feature).toContain(`${feature}=()`)
     }
   })
 })

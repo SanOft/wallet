@@ -27,6 +27,24 @@ export const USSD_MAX_SEPTETS = 182
 export const USSD_PIN_LENGTH = 4
 
 /**
+ * How a screen says it is asking for a PIN.
+ *
+ * Shared because two sides depend on it and neither can see the other: the
+ * adapter writes the prompt, and F7's simulator reads it off the screen to
+ * decide whether to mask what is typed next — the same signal the person
+ * holding the phone uses, and deliberately the *only* protocol knowledge the
+ * simulator has (a gateway that understood the menu would be a second
+ * implementation of it).
+ *
+ * The coupling was previously a regex written out in the browser against copy
+ * written in the API, in a different workspace that cannot import it. Changing
+ * the adapter's wording would have silently stopped the masking, with nothing
+ * failing. `apps/api` now asserts its prompts against this pattern, so the
+ * rename fails there instead.
+ */
+export const USSD_PIN_PROMPT = /\bPIN\b/i
+
+/**
  * The session dies after this long without input (FR-9.4).
  *
  * Enforced by the network, not by us: there is no server-side session to
@@ -34,6 +52,17 @@ export const USSD_PIN_LENGTH = 4
  * constant is here so the simulator can behave like the network does.
  */
 export const USSD_SESSION_TTL_MS = 180_000
+
+/**
+ * FR-9.4's hard bound: a reply the gateway is still willing to wait for.
+ *
+ * The same requirement names 3 s as the target, and that number is deliberately
+ * not a constant here — it is measured against a running server and recorded in
+ * the runbook, because a CPU-time assertion on shared CI hardware is a flaky
+ * test rather than a guarantee. This is the bound a regression has to break to
+ * matter: at it, the subscriber has already pressed the key again.
+ */
+export const USSD_RESPONSE_CEILING_MS = 10_000
 
 export const ussdCallbackSchema = z.strictObject({
   sessionId: z.string().min(1, { error: "field.required" }).max(64),

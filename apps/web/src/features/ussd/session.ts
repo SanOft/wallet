@@ -1,4 +1,4 @@
-import { USSD_SESSION_TTL_MS } from "@wallet/shared"
+import { USSD_PIN_PROMPT, USSD_SESSION_TTL_MS } from "@wallet/shared"
 
 /**
  * The simulator's half of FR-9.6, with no React, no clock and no network in
@@ -136,9 +136,15 @@ export function remainingMs(session: Session, now: number): number | null {
  * The alternative was to import the adapter's state machine, which would make
  * the simulator smarter than any gateway is and give the protocol two
  * implementations to keep in step.
+ *
+ * The pattern itself lives in `packages/shared` rather than here. It used to be
+ * written out in this file against copy written in `apps/api`, which this
+ * workspace cannot import (§8.2) — so renaming the adapter's prompt would have
+ * stopped the masking with nothing failing anywhere. `apps/api` now asserts its
+ * prompts against it, and the rename fails there.
  */
 export function asksForPin(reply: Reply | undefined): boolean {
-  return reply?.kind === "CON" && /\bPIN\b/i.test(reply.text)
+  return reply?.kind === "CON" && USSD_PIN_PROMPT.test(reply.text)
 }
 
 /** The screen currently showing, or `undefined` before the first reply. */

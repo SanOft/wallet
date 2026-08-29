@@ -127,6 +127,31 @@ but bought roughly 4 KB and did not move the score.
 Buying real headroom means taking RTK Query and Zod off the anonymous path,
 which is architecture, not tuning. Recorded rather than done.
 
+#### Measuring an authenticated route
+
+`/login` is the only route a plain Lighthouse run can reach; everything else is
+behind a session. Pass the cookies instead of guessing:
+
+```bash
+curl -s -i -X POST http://HOST/api/auth/login -H 'content-type: application/json'   -d '{"phone":"...","password":"..."}' | grep -i '^set-cookie:'
+# -> wallet_refresh, wallet_session
+npx lighthouse http://HOST/labs/ussd --extra-headers=headers.json ...
+```
+
+Measured this way, every route scores the same: **97 performance, 100
+accessibility, 100 best practices, 100 SEO** — `/login`, `/`, `/history`,
+`/transfer` and `/labs/ussd` are within a point of each other, with FCP 2.0 s
+and LCP 2.1 s throughout. The deep-link waterfall an authenticated route
+suggests — shell, then refresh, then the route's chunk, then its data — does not
+show up in the number.
+
+**Serve the build the way a host would, or you will measure the harness.** A
+plain Node static server with no `Content-Encoding` scored every route at 84,
+including `/login`, whose real figure is 98. The entry chunk went out at 331 KB
+instead of 106 KB. The control that caught it was measuring `/login` alongside
+the route under test and noticing that the known-good page had also moved — a
+single-route measurement would have been reported as a finding about that route.
+
 #### A code-split route is not style-split
 
 The first thing that will take the mobile score below 98 is not a heavy
@@ -207,6 +232,32 @@ Then in `apps/api/.env`:
 `DATABASE_URL` exactly as before. CI leaves it unset on purpose — a throwaway
 container has nothing to protect, and requiring it would fail every job to fix
 a problem those jobs do not have.
+
+### FR-9.4's response budget, measured
+
+The requirement is a reply under **10 s**, targeting **3 s**. The ceiling is
+asserted in `test/ussd.test.ts` on every step of a §11.7 session. The target is
+measured rather than asserted, because a CPU-time bound on shared CI hardware is
+a flaky test and not a guarantee.
+
+Five full sessions against a local server, milliseconds:
+
+| step | min | median | max |
+|---|---|---|---|
+| menu | 5 | 11 | 21 |
+| ask recipient | 6 | 9 | 14 |
+| quote recipient | 9 | 18 | 29 |
+| quote amount | 5 | 8 | 11 |
+| **transfer (PIN + ledger)** | **104** | **143** | **229** |
+
+The last row is the only expensive one and the only one that should be: argon2
+PIN verification plus a `Serializable` transaction. 229 ms worst against a
+3 000 ms target is thirteen times inside it.
+
+What this does not tell you: it is a local database on loopback. A hosted
+Postgres adds a round trip per query, and Render's free tier sleeps (P-27) — a
+cold start is not a slow response, it is a refused one, and no timing budget
+covers that.
 
 ### Two accounts that survive a reseed
 
