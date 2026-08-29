@@ -127,6 +127,36 @@ but bought roughly 4 KB and did not move the score.
 Buying real headroom means taking RTK Query and Zod off the anonymous path,
 which is architecture, not tuning. Recorded rather than done.
 
+#### A code-split route is not style-split
+
+The first thing that will take the mobile score below 98 is not a heavy
+dependency. It is a new screen adding a handful of Tailwind utilities nothing
+else uses.
+
+Tailwind emits **one** stylesheet for the whole application. A route can be
+behind `lazy()` and still put its utilities in the render-blocking CSS that the
+login screen waits for. F7 did exactly that: ten new classes, 389 bytes, and
+Lighthouse mobile performance fell from 98 to 97 — LCP from ~2020 ms to
+~2180 ms, with FCP and TBT unchanged, reproduced across nine interleaved pairs
+against `main` on a quiet machine.
+
+The fix is to write a lazy route's own layout as inline `style`, so the bytes
+land in that route's chunk. Two things are worth knowing before spending an
+afternoon on it:
+
+- **Measure interleaved, both builds served at once.** Sequential batches drift
+  enough on a working machine to invent a difference or hide one. Two of the
+  wrong turns here came from comparing batches taken minutes apart.
+- **Tailwind v4 scans raw file text, comments included.** Naming the classes you
+  just removed regenerates them. Two of the ten came back from the sentence
+  explaining their removal.
+
+The service worker was the other suspect and was innocent, which is worth
+recording so nobody re-tests it: `globPatterns` precaches every emitted chunk,
+so a new route does add downloads to the first visit. Excluding the route from
+the precache changed the score by nothing measurable. The stylesheet was the
+whole effect.
+
 One caveat worth knowing before it wastes an afternoon: DevTools network
 throttling does **not** flip `navigator.onLine`, so the offline banner will not
 appear under it. The banner is driven by the `offline` event and is covered by

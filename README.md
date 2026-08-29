@@ -57,13 +57,14 @@ frontend follows in September.
 | Demo top-up, balance, recipient lookup | Done |
 | Reconciliation job — `yarn workspace @wallet/api db:reconcile` | Done |
 | Transport hardening — helmet, CORS allowlist, rate limits, gitleaks | Done |
-| Transaction history (FR-5) | Not started |
+| Transaction history (FR-5) | Done |
 | Deploy — Neon + Render | Not started |
-| `@wallet/web` — React PWA, offline outbox | September |
-| USSD adapter | September |
+| `@wallet/web` — React PWA, offline outbox | Done |
+| USSD adapter, and a browser simulator for it (FR-9.6) | Done |
 
-Nine JSON endpoints and a health check run behind `apps/api`, over 24 source
-files and 202 tests. `apps/web` is still an empty workspace stub.
+Fifteen JSON endpoints and a health check run behind `apps/api`. The three
+workspaces hold 565 tests between them — 261 for the API, 58 for the shared
+contracts, 246 for the web app.
 
 The invariants are enforced by the database rather than by the service that
 writes to it: ledger rows reject `UPDATE`, `DELETE` and `TRUNCATE` outright, and
@@ -72,6 +73,40 @@ exactly two entries, on the two accounts party to it, summing to zero. A bug in
 application code cannot corrupt the ledger. Something with rights to `ALTER
 TABLE` still can — see [`docs/PARKING.md`](docs/PARKING.md) P-4, which is
 tracked as blocking a real deployment rather than as a nice-to-have.
+
+### The USSD channel, in a browser
+
+A phone with no data dials `*880#`. There is no real gateway in the MVP, so
+`apps/web` ships one: a page that posts exactly what a gateway posts, and prints
+exactly what comes back (FR-9.6).
+
+![The USSD simulator sending a transfer](docs/media/ussd-simulator.gif)
+
+It is a lab page rather than a feature, and it is built to be honest about the
+channel rather than flattering to it:
+
+- **`text` accumulates.** Every request carries the whole conversation —
+  `""` → `"2"` → `"2*944298026"` → `"2*944298026*50000"` — because the server
+  keeps no session. The request body is on screen while you dial.
+- **The PIN is in that field, in clear.** The panel masks it by default and will
+  show it on request. That is the evidence behind
+  [ADR-0010](docs/adr/0010-pin-before-any-ussd-disclosure.md): GSM A5/1 is
+  broken and NIST SP 800-63B classifies the PSTN as RESTRICTED, which is an
+  abstract claim until you watch your own four digits appear in a form field.
+- **182 septets, not 182 characters.** The counter above the screen measures the
+  reply with the same function the adapter fits it with. One character outside
+  the GSM 7-bit alphabet — the turned comma in "Gʻafur", any Cyrillic letter —
+  collapses the budget to 70 and the network truncates the rest silently. So
+  "Зулфия Каримова" arrives as `ZULFIYA K.`, transliterated rather than replaced,
+  because the sender has to be able to recognise who they are paying.
+- **The session dies after 180 seconds**, and the page says the network did it,
+  not the server. A dial is never queued for later: the offline outbox that
+  carries a failed transfer is the wrong answer here, and the page explains why
+  instead of leaving a dead button.
+
+Nothing on this page re-implements the menu. The gateway is deliberately dumb —
+it forwards text and prints replies — because every piece of protocol knowledge
+it does not have is a way it cannot drift from the real thing.
 
 ### Architecture
 
@@ -286,13 +321,14 @@ live". Frontend sentyabrda.
 | Demo to'ldirish, balans, qabul qiluvchini qidirish | Tayyor |
 | Solishtirish (reconciliation) jobi — `yarn workspace @wallet/api db:reconcile` | Tayyor |
 | Transport himoyasi — helmet, CORS ro'yxati, so'rov limitlari, gitleaks | Tayyor |
-| Tranzaksiyalar tarixi (FR-5) | Boshlanmagan |
+| Tranzaksiyalar tarixi (FR-5) | Tayyor |
 | Deploy — Neon va Render | Boshlanmagan |
-| `@wallet/web` — React PWA, offline outbox | Sentyabr |
-| USSD adapteri | Sentyabr |
+| `@wallet/web` — React PWA, offline outbox | Tayyor |
+| USSD adapteri va uning brauzer simulyatori (FR-9.6) | Tayyor |
 
-`apps/api` ortida to'qqizta JSON endpoint va bitta health tekshiruvi ishlaydi —
-24 ta manba fayl va 202 ta test. `apps/web` hali bo'sh workspace zaglushkasi.
+`apps/api` ortida o'n beshta JSON endpoint va bitta health tekshiruvi ishlaydi.
+Uchta workspace jami 565 ta testni saqlaydi — API uchun 261, umumiy
+kontraktlar uchun 58, web ilova uchun 246.
 
 Invariantlarni unga yozadigan xizmat emas, balki bazaning o'zi ushlab turadi:
 ledger qatorlari `UPDATE`, `DELETE` va `TRUNCATE` ni butunlay rad etadi, kechiktirilgan
@@ -301,6 +337,41 @@ qoldirganini, ular o'tkazmaga aloqador ikki hisobda ekanini va yig'indisi nol
 ekanini tekshiradi. Dastur kodidagi xato ledgerni buza olmaydi. `ALTER TABLE`
 huquqiga ega narsa esa hali ham buzishi mumkin — [`docs/PARKING.md`](docs/PARKING.md)
 dagi P-4 ga qarang: u haqiqiy deploy uchun to'siq deb belgilangan.
+
+### USSD kanali, brauzerda
+
+Internetsiz telefon `*880#` ni teradi. MVPda haqiqiy shlyuz yo'q, shuning uchun
+`apps/web` uni o'zi taqdim etadi: shlyuz yuboradigan so'rovning aynan o'zini
+yuboradigan va qaytgan javobni aynan ko'rsatadigan sahifa (FR-9.6).
+
+![USSD simulyatori o'tkazma yubormoqda](docs/media/ussd-simulator.gif)
+
+Bu sahifa "labs" bo'limida — kanalni bezab emas, borligicha ko'rsatish uchun
+qurilgan:
+
+- **`text` to'planib boradi.** Har bir so'rov butun suhbatni olib yuradi —
+  `""` → `"2"` → `"2*944298026"` → `"2*944298026*50000"` — chunki server
+  sessiyani saqlamaydi. So'rov tanasi terish davomida ekranda turadi.
+- **PIN o'sha maydonda, ochiq matn sifatida ketadi.** Panel uni sukut bo'yicha
+  yashiradi va so'ralganda ko'rsatadi. Bu
+  [ADR-0010](docs/adr/0010-pin-before-any-ussd-disclosure.md) ning dalili: GSM
+  A5/1 buzilgan va NIST SP 800-63B PSTN ni RESTRICTED deb tasniflaydi — bu o'z
+  to'rt raqamingiz forma maydonida paydo bo'lganini ko'rmaguningizcha mavhum
+  da'vo bo'lib qoladi.
+- **182 belgi emas, 182 septet.** Ekran ustidagi hisoblagich javobni adapter
+  ishlatadigan o'sha funksiya bilan o'lchaydi. GSM 7-bit alifbosidan tashqaridagi
+  bitta belgi — "Gʻafur" dagi tutuq belgisi yoki istalgan kiril harfi — chegarani
+  70 ga tushiradi va tarmoq qolganini jimgina kesadi. Shuning uchun "Зулфия
+  Каримова" `ZULFIYA K.` bo'lib yetib boradi: almashtirilmay, transliteratsiya
+  qilinadi, chunki yuboruvchi kimga to'layotganini tanishi shart.
+- **Sessiya 180 soniyadan keyin o'ladi**, va sahifa buni serverni emas, tarmoqni
+  aybdor qilib aytadi. Terish hech qachon navbatga qo'yilmaydi: muvaffaqiyatsiz
+  o'tkazmani saqlaydigan offline outbox bu yerda noto'g'ri javob, va sahifa
+  o'lik tugma qoldirish o'rniga sababini tushuntiradi.
+
+Bu sahifada menyu qaytadan yozilmagan. Shlyuz ataylab "ahmoq" — u matnni uzatadi
+va javobni chiqaradi, xolos — chunki uning protokol haqida bilmagan har bir
+narsasi haqiqiy shlyuzdan uzoqlashib ketolmasligining kafolati.
 
 ### Arxitektura
 

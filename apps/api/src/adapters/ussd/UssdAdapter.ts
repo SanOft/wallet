@@ -3,8 +3,10 @@ import type { PrismaClient } from "@prisma/client"
 import {
   CHANNEL_LIMITS,
   formatMoney,
+  gsm7Septets,
   maskRecipientName,
   TRANSFER_LIMITS,
+  toGsm7,
   USSD_MAX_SEPTETS,
   USSD_PIN_LENGTH,
   type UssdCallback,
@@ -12,7 +14,6 @@ import {
 import type { AuthService } from "../../domain/AuthService.js"
 import { DomainError } from "../../domain/errors.js"
 import type { HistoryRow, TransferService } from "../../domain/TransferService.js"
-import { gsm7Septets, toGsm7 } from "./gsm7.js"
 import { resolveStep } from "./steps.js"
 import { SlidingWindow } from "./window.js"
 

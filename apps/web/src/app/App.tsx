@@ -52,6 +52,12 @@ const Profile = lazy(() => import("../screens/Profile.js").then((m) => ({ defaul
 const FormShowcase = lazy(() =>
   import("../screens/FormShowcase.js").then((m) => ({ default: m.FormShowcase })),
 )
+/*
+ * Split like every other signed-in screen, and it earns it more than most:
+ * the simulator is a page almost nobody opens, and its keypad, wire panel and
+ * GSM-7 table have no business in the bundle of someone checking a balance.
+ */
+const UssdLab = lazy(() => import("../screens/UssdLab.js").then((m) => ({ default: m.UssdLab })))
 
 /**
  * What a route shows while its code is in flight.
@@ -207,6 +213,17 @@ function Shell() {
               element={
                 <RequireAuth>
                   <Profile />
+                </RequireAuth>
+              }
+            />
+            {/* §13.3 hangs this off the profile. Its own path rather than a
+                panel inside that screen: a session in progress must survive
+                the user going to look at something else and coming back. */}
+            <Route
+              path="/labs/ussd"
+              element={
+                <RequireAuth>
+                  <UssdLab />
                 </RequireAuth>
               }
             />
