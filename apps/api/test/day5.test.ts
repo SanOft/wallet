@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { PrismaClient } from "@prisma/client"
-import { DEMO_TOPUP_AMOUNT, maskRecipientName } from "@wallet/shared"
+import { DEMO_TOPUP_AMOUNT, maskRecipientName, TRANSFER_LIMITS } from "@wallet/shared"
 import request from "supertest"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
@@ -218,6 +218,42 @@ describe.skipIf(!hasDatabase)("day 5 — top-up, accounts and lookup", () => {
     it("refuses without a token", async () => {
       const { app } = buildApp(prisma, { ...process.env })
       expect((await request(app).get("/api/accounts")).status).toBe(401)
+    })
+  })
+
+  describe("which refusal a web caller can reach (P-18)", () => {
+    it("answers an over-large transfer as a bad amount, not as a breached limit", async () => {
+      /*
+       * FR-4.7's maximum and FR-6.1's web cap are the same number, and
+       * `#assertAmountIsSane` runs on the line before `#assertWithinLimits`. So
+       * nothing can be at once within the maximum and above the cap, and
+       * `limit.per_operation` is unreachable on this channel.
+       *
+       * `reachable-limits.test.ts` pins the two constants. This pins the
+       * consequence, which is the half that would change if somebody swapped
+       * the order of those two checks: the constants would be untouched and the
+       * error a user sees would flip from 400 to 422.
+       */
+      const sender = await newUser()
+      const target = await newUser("Amina", "Jurayeva")
+
+      const res = await request(sender.app)
+        .post("/api/transfers")
+        .set("authorization", `Bearer ${sender.token}`)
+        .set("idempotency-key", randomUUID())
+        // With the step-up password, deliberately. `#assertStepUp` runs before
+        // the transaction, so without it the answer is `STEP_UP_REQUIRED` and
+        // the amount is never examined at all — which is a third refusal this
+        // channel reaches first, and was not obvious until it was measured.
+        .send({
+          phone: target.phone,
+          amount: String(TRANSFER_LIMITS.UZS.max + 100n),
+          password: PASSWORD,
+        })
+
+      expect(res.status, JSON.stringify(res.body)).toBe(400)
+      expect(res.body.error.code).toBe("VALIDATION_ERROR")
+      expect(res.body.error.details?.[0]?.code).toBe("money.above_maximum")
     })
   })
 
