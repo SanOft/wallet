@@ -31,6 +31,31 @@ const envSchema = z.object({
   TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(10).default(1),
 
   /**
+   * The fixed time every registration takes, accepted or refused (P-13).
+   *
+   * FR-1.5 makes the *body* of a refusal generic so an attacker cannot walk a
+   * number range and learn who banks here. It never made the *duration*
+   * generic, and the duration was readable: a ratio of 1.20 and a single
+   * sample classifiable about 80% of the time.
+   *
+   * Equalising the work was tried first and measured, twice. Giving the
+   * refused path the same inserts moved the gap and not the classifier;
+   * committing an `auth_attempt` so both outcomes commit once did not close it
+   * either, because creating an account writes four rows against a refusal's
+   * one. The residue is the intrinsic cost of the thing being refused, and no
+   * arrangement of honest work removes it.
+   *
+   * So the response is held to a fixed budget instead. Measured before it was
+   * chosen: an accepted registration runs 44 ms at its fastest, 73 ms at p90
+   * and 124 ms at p99 on the development machine, so 250 ms clears the slow
+   * tail with room. Configuration rather than a constant because a smaller
+   * host has a slower tail, and a budget the work overruns is no budget at all
+   * — `0` disables it, which the test suite uses so several hundred
+   * registrations do not each wait a quarter second.
+   */
+  REGISTRATION_TIME_BUDGET_MS: z.coerce.number().int().min(0).max(5000).default(250),
+
+  /**
    * Neon connection string (§20.2). The scheme is checked here because a
    * typo like `postgres:/host` otherwise boots cleanly and fails at the first
    * query — which is the failure mode this whole module exists to prevent.

@@ -53,6 +53,17 @@ export interface AuthServiceDependencies {
   readonly pepper: string
   /** Injected so tests can freeze it; the client clock is never trusted (D-10). */
   readonly now?: () => Date
+  /**
+   * How long a registration takes whatever its outcome, in milliseconds
+   * (P-13). Zero disables the padding; see `REGISTRATION_TIME_BUDGET_MS`.
+   */
+  readonly registrationBudgetMs?: number
+  /**
+   * Same seam as `TransferService`: the domain reports, the adapter logs
+   * (§8.3). Used for the one condition that silently un-does the constant-time
+   * guarantee — work that outruns its budget.
+   */
+  readonly warn?: (event: string, detail: unknown) => void
 }
 
 interface UserRow {
@@ -108,12 +119,23 @@ export class AuthService {
   readonly #tokens: TokenService
   readonly #now: () => Date
   readonly #pepper: string
+  readonly #registrationBudgetMs: number
+  readonly #warn: (event: string, detail: unknown) => void
 
-  constructor({ prisma, tokens, pepper, now = () => new Date() }: AuthServiceDependencies) {
+  constructor({
+    prisma,
+    tokens,
+    pepper,
+    now = () => new Date(),
+    registrationBudgetMs = 0,
+    warn = () => {},
+  }: AuthServiceDependencies) {
     this.#prisma = prisma
     this.#tokens = tokens
     this.#pepper = pepper
     this.#now = now
+    this.#registrationBudgetMs = registrationBudgetMs
+    this.#warn = warn
   }
 
   /**
@@ -187,7 +209,7 @@ export class AuthService {
    * catch below still handles the race in which two registrations both see a
    * number as free. It exists so the two outcomes can be given the same work.
    */
-  async register(input: RegisterRequest): Promise<Session> {
+  async #registerWithoutPadding(input: RegisterRequest): Promise<Session> {
     const passwordHash = await hashSecret(input.password)
     const subject = registrationSubject(input.phone, this.#pepper)
 
@@ -246,6 +268,62 @@ export class AuthService {
     }
 
     return session
+  }
+
+  /**
+   * FR-1, in the same time whether it succeeds or refuses (P-13).
+   *
+   * The body of a refusal has always been generic; its duration was not, and
+   * the difference was an oracle for exactly the question FR-1.5 refuses to
+   * answer — a ratio of 1.20 with a single sample classifiable about 80% of
+   * the time.
+   *
+   * Two attempts to equalise the *work* are recorded in P-13 and neither
+   * closed it, because creating an account writes four rows against a
+   * refusal's one and that difference is the thing being refused. What is left
+   * is to stop the duration carrying the answer, so both outcomes are held to
+   * one budget.
+   *
+   * In `finally`, so a thrown refusal waits exactly as long as a returned
+   * session — a padding that only covers the success path inverts the leak
+   * rather than removing it. `await` inside `finally` delays the rejection
+   * without swallowing it, which is the property this depends on.
+   *
+   * The budget is not a floor on the work; it is a floor on the answer. If the
+   * work overruns it the padding does nothing and the difference returns, so
+   * the value has to clear the slow tail on the host that runs it — measured
+   * and configurable rather than assumed.
+   */
+  async register(input: RegisterRequest): Promise<Session> {
+    if (this.#registrationBudgetMs <= 0) return this.#registerWithoutPadding(input)
+
+    const started = performance.now()
+    try {
+      return await this.#registerWithoutPadding(input)
+    } finally {
+      const elapsed = performance.now() - started
+      const remaining = this.#registrationBudgetMs - elapsed
+
+      if (remaining > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remaining))
+      } else {
+        /*
+         * The one condition that quietly undoes all of this. Past the budget
+         * there is nothing left to pad with, the real duration shows through,
+         * and the oracle returns — while every test still passes, because the
+         * padding is present and simply had no room to work.
+         *
+         * A slower host is the likely cause and the fix is a larger budget, so
+         * the number is in the message. Reported rather than thrown: a
+         * registration that succeeded must not be turned into a failure by the
+         * clock.
+         */
+        this.#warn("registration.budget_exceeded", {
+          elapsedMs: Math.round(elapsed),
+          budgetMs: this.#registrationBudgetMs,
+        })
+      }
+    }
   }
 
   /**
