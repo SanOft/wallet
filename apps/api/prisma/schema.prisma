@@ -147,13 +147,22 @@ model LedgerEntry {
   /// Signed minor units: negative debits the account, positive credits it.
   amount       BigInt
   /// Account balance immediately after this entry, making an audit O(1) (§9.2).
+  ///
+  /// Verified at COMMIT against the entry's predecessor on the same account
+  /// (P-21). Until that check existed nothing validated this column at all,
+  /// and an audit trail nobody checks is worse than none.
   balanceAfter BigInt
+  /// Insertion order, which `createdAt` cannot provide: it defaults to the
+  /// transaction timestamp, so every entry one transaction writes shares it.
+  /// The COMMIT-time check needs a well-defined predecessor per account.
+  seq          BigInt   @unique @default(autoincrement())
   createdAt    DateTime @default(now()) @db.Timestamptz(3)
 
   account  Account  @relation(fields: [accountId], references: [id])
   transfer Transfer @relation(fields: [transferId], references: [id])
 
   @@index([accountId, createdAt])
+  @@index([accountId, seq(sort: Desc)])
   @@index([transferId])
   @@map("ledger_entries")
 }
