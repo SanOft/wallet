@@ -70,6 +70,12 @@ Confirm before starting: `curl -s localhost:3000/health` answers, and
 | 2.6 | Try to send more than the balance | Refused before the request leaves the browser |
 | 2.7 | Try to send to your own number | Refused |
 | 2.8 | Complete the transfer | Both balances move. Sign in as Amina and confirm she received it |
+| 2.9 | Look at the row above **Davom etish** on the amount step | **Bugungi qolgan chegara** shows a figure, not an em dash. An em dash means the accounts request has not answered — it must never render as the full limit (P-32) |
+| 2.10 | Note the allowance, send 5 000, come back to the amount step | The allowance dropped by exactly 5 000. It is computed by the same function that would refuse the transfer, so a figure that disagrees with the refusal is the bug this row exists to catch |
+| 2.11 | Type an amount larger than the remaining allowance | Refused in the browser with **Bugungi chegaradan oshdi**, and **Davom etish** is dead. The server still holds the real gate; this only saves the round trip |
+| 2.12 | On step 1, look under the number field | **So'nggi qabul qiluvchilar** lists up to three people you have paid, each with a name **and** the number. Masked names are deliberately not unique (FR-4.6), so a list showing only names could pay the wrong person |
+| 2.13 | Tap one of them | The number fills **and** the lookup runs — the name card appears with no typing. If **Davom etish** became live without a name card, FR-4.9's check was skipped, which is the one thing this shortcut must not do |
+| 2.14 | Sign in as an account that has received money but never sent any (Amina, before she is used as a sender anywhere above) | The list is absent, not empty-with-a-heading. Incoming transfers withhold the sender's number (P-36), so a row from one could name somebody and then fill nothing |
 
 ## 3. History — FR-5
 
@@ -133,6 +139,8 @@ The rule this project is held to, checked directly.
 | 7.2 | With the API stopped, dial in the USSD lab | "Could not reach the gateway" — and **not** a fake `CON`/`END`, which would be a screen the server never sent |
 | 7.3 | Keep the console open throughout | Every handled failure leaves a `[wallet]` line. A silent recovery is a defect |
 | 7.4 | Restart the API, retry | Recovers without a reload |
+| 7.5 | Find a transfer that failed, in **Tarix** | The amount is struck through, grey, and reads **bajarilmadi** — never a green `+`. Money that did not arrive must not look like money that did (#56) |
+| 7.6 | On **Asosiy**, switch **Mavzu** between the three icons | System, light and dark each take effect. Reach them with Tab and the arrow keys: they are real radio inputs, so a keyboard user must be able to change the theme without a mouse |
 
 ## 8. The ledger still balances
 

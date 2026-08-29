@@ -57,6 +57,36 @@ interface Result {
   routing: string | null
 }
 
+/**
+ * The daily allowance out of an accounts response, or `null` if it is not
+ * there in the shape the contract promises.
+ *
+ * Read by hand rather than with `accountsResponseSchema`, for the reason at the
+ * top of this file: the API validates its own responses against that schema, so
+ * a smoke test using it would agree with a broken server about what "valid"
+ * means. A malformed or absent field returns `null` here, which fails the
+ * check — the direction an unknown shape should fail in.
+ */
+function readDaily(
+  body: Record<string, unknown>,
+): Record<"limit" | "spent" | "remaining", string> | null {
+  const limits = body.limits
+  if (typeof limits !== "object" || limits === null) return null
+
+  const daily = (limits as Record<string, unknown>).daily
+  if (typeof daily !== "object" || daily === null) return null
+
+  const fields = daily as Record<string, unknown>
+  const limit = fields.limit
+  const spent = fields.spent
+  const remaining = fields.remaining
+  if (typeof limit !== "string" || typeof spent !== "string" || typeof remaining !== "string") {
+    return null
+  }
+
+  return { limit, spent, remaining }
+}
+
 async function call(
   path: string,
   init: RequestInit & { token?: string; key?: string } = {},
@@ -195,6 +225,34 @@ async function main(): Promise<void> {
     "POST /api/transfers",
     completed,
     `status=${transfer.status} outcome=${String(transfer.body.status ?? transfer.body.error)}`,
+  )
+
+  /*
+   * The accounts response, read *after* the transfer so the daily allowance
+   * has something to report.
+   *
+   * A shape check alone would pass against a hardcoded number, so this asserts
+   * the arithmetic instead: the account was registered moments ago, so the one
+   * transfer above is the whole of its rolling 24 hours (FR-6.1) and `spent`
+   * has exactly one correct value. That is the difference between "the field
+   * is present in production" and "the figure production serves is computed
+   * from what actually happened" — the second is what P-32 promised, and the
+   * only place the deployed build is exercised.
+   *
+   * No extra pollution: it reuses the session the checks above already made,
+   * and reads rather than writes (P-26).
+   */
+  const accounts = await call("/api/accounts", { token })
+  const daily = readDaily(accounts.body)
+  const allowanceCorrect =
+    accounts.status === 200 &&
+    daily !== null &&
+    daily.spent === "300000" &&
+    BigInt(daily.remaining) === BigInt(daily.limit) - 300_000n
+  report(
+    "GET /api/accounts — daily allowance tracks the transfer",
+    allowanceCorrect,
+    `status=${accounts.status} spent=${String(daily?.spent)} remaining=${String(daily?.remaining)} limit=${String(daily?.limit)}`,
   )
 
   console.log(failures === 0 ? "\nsmoke: all checks passed" : `\nsmoke: ${failures} failed`)
