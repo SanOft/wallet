@@ -278,8 +278,23 @@ ownership and does the same job.
 
 **The lesson is not about that statement.** It is that a migration is tested
 against the privileges of the machine that runs it, and the deployed database
-grants fewer. `docs/runbook.md` cannot check that for you; a non-superuser role
-locally can:
+grants fewer.
+
+CI now closes that gap: the `migrations` job creates a `NOSUPERUSER` role,
+gives it a database of its own, **proves the role really is restricted** — a
+probe that could set the parameter after all would pass vacuously — and applies
+every migration as it. Verified to catch the real thing: reintroducing
+`SET LOCAL session_replication_role` turns that job red with the same
+`permission denied` the production deploy hit.
+
+One consequence worth knowing before optimising it away: the trigger suspension
+in that migration is **unconditional** rather than guarded on there being rows
+to repair. The guard is faster and it is also a blind spot — on the fresh
+database CI uses there is nothing to repair, so the privileged statement would
+never run and the job would pass without testing the line that failed. The
+tested path has to be the executed path.
+
+To reproduce locally:
 
 ```bash
 psql -c "CREATE ROLE probe LOGIN PASSWORD '...' NOSUPERUSER"

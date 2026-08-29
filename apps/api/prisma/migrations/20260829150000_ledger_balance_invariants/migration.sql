@@ -74,12 +74,21 @@ BEGIN
   -- P3009. Ownership of the table is enough for `DISABLE TRIGGER USER`, and
   -- ownership is what a migration role legitimately has.
   --
-  -- Guarded on there being something to repair, so the common case — a
-  -- database whose chain is already correct — never takes the ACCESS
-  -- EXCLUSIVE lock at all.
-  IF needs_repair > 0 THEN
-    ALTER TABLE "ledger_entries" DISABLE TRIGGER USER;
-  END IF;
+  -- Unconditional, deliberately, and this is the second lesson from the same
+  -- incident.
+  --
+  -- The obvious version guards it on `needs_repair > 0`, so a database whose
+  -- chain is already correct never takes the ACCESS EXCLUSIVE lock. That guard
+  -- is also a hole: on a *fresh* database there is nothing to repair, so the
+  -- privileged statement never executes, so a CI job that applies migrations
+  -- under a reduced-privilege role would pass without ever testing the one
+  -- line that failed in production.
+  --
+  -- The tested path has to be the executed path. This is a one-time migration
+  -- over a table that is small when it runs, so the lock costs nothing worth
+  -- buying a blind spot with. `needs_repair` is still counted, because the
+  -- NOTICE below is worth having.
+  ALTER TABLE "ledger_entries" DISABLE TRIGGER USER;
 
   WITH ordered AS (
     SELECT "id",
@@ -93,9 +102,7 @@ BEGIN
    WHERE o."id" = le."id" AND le."balanceAfter" <> o.running;
   GET DIAGNOSTICS repaired_entries = ROW_COUNT;
 
-  IF needs_repair > 0 THEN
-    ALTER TABLE "ledger_entries" ENABLE TRIGGER USER;
-  END IF;
+  ALTER TABLE "ledger_entries" ENABLE TRIGGER USER;
 
   UPDATE "accounts" a
      SET "balance" = COALESCE((SELECT SUM(le."amount") FROM "ledger_entries" le

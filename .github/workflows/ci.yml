@@ -85,6 +85,73 @@ jobs:
       - run: yarn verify
       - run: yarn npm audit --all --recursive
 
+  # Migrations, applied by a role with the privileges the deployed one has.
+  #
+  # This job exists because a migration passed CI and broke production. It used
+  # `SET LOCAL session_replication_role`, which needs superuser; CI's service
+  # container runs as one and Neon's role does not, so the difference was
+  # invisible until `migrate deploy` failed against the real database and
+  # blocked every migration behind it (P3009).
+  #
+  # The `test` job above cannot cover this. It needs a superuser to reset the
+  # schema between runs, and the whole point here is a role that is not one.
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: yarn install --immutable
+
+      # An owner, not a superuser — the shape Neon gives an application.
+      - name: create a reduced-privilege role
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c \
+            "CREATE ROLE migrator LOGIN PASSWORD 'migrator' NOSUPERUSER"
+          psql -h localhost -U postgres -c \
+            "CREATE DATABASE wallet_asdeployed OWNER migrator"
+
+      # Without this the job is theatre: if the role could set the parameter
+      # after all, every assertion below would pass while testing nothing. The
+      # probe has to be shown to be faithful before its result means anything.
+      - name: prove the role really is restricted
+        env:
+          PGPASSWORD: migrator
+        run: |
+          if psql -h localhost -U migrator -d wallet_asdeployed \
+               -c "SET session_replication_role = 'replica'" 2>/dev/null; then
+            echo "::error::the probe role is not restricted — this job would pass vacuously"
+            exit 1
+          fi
+          echo "role cannot set session_replication_role, as on the deployed database"
+
+      - name: apply every migration as that role
+        working-directory: apps/api
+        env:
+          DATABASE_URL: postgresql://migrator:migrator@localhost:5432/wallet_asdeployed?schema=public
+        run: yarn prisma migrate deploy
+
   # Its own job because it needs neither Node nor Postgres, and because running
   # it inside the matrix would scan the same history once per Node version.
   secrets:
@@ -125,7 +192,7 @@ jobs:
   # An aggregate keeps one stable contract with branch protection while the jobs
   # behind it change freely.
   verify:
-    needs: [test, secrets]
+    needs: [test, migrations, secrets]
     # `always()`, because a job whose dependency failed is *skipped*, and a
     # skipped required check is not a failed one — which would make this gate
     # pass by not running.
@@ -136,6 +203,9 @@ jobs:
     steps:
       - name: every job succeeded
         run: |
-          echo "test=${{ needs.test.result }} secrets=${{ needs.secrets.result }}"
+          echo "test=${{ needs.test.result }}"
+          echo "migrations=${{ needs.migrations.result }}"
+          echo "secrets=${{ needs.secrets.result }}"
           [ "${{ needs.test.result }}" = "success" ] || exit 1
+          [ "${{ needs.migrations.result }}" = "success" ] || exit 1
           [ "${{ needs.secrets.result }}" = "success" ] || exit 1
