@@ -259,6 +259,16 @@ Postgres adds a round trip per query, and Render's free tier sleeps (P-27) — a
 cold start is not a slow response, it is a refused one, and no timing budget
 covers that.
 
+### Checking it by hand
+
+`docs/smoke-plan.md` walks one person from registration through a USSD transfer
+and back to the web history, against a local API and the PWA on `:5173`.
+
+It deliberately does not repeat the automated suites. It covers the three
+things they cannot: that the parts add up, what a screen actually looks like,
+and failures that have to be real rather than stubbed — a dropped connection, a
+second tab, a reload mid-flow.
+
 ### Two accounts that survive a reseed
 
 `yarn workspace @wallet/api db:seed:demo` creates the pair used for
