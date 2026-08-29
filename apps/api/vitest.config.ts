@@ -3,6 +3,11 @@ import { defineConfig } from "vitest/config"
 export default defineConfig({
   test: {
     setupFiles: ["./test/setup.ts"],
+    /*
+     * Once per run, not per file: resets the database the suites share and
+     * refuses to start at all if CI has no database to point at (P-17).
+     */
+    globalSetup: ["./test/global-setup.ts"],
     // Integration tests share one database; running files in parallel would let
     // them observe each other's rows.
     fileParallelism: false,
