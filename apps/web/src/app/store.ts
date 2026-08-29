@@ -77,6 +77,34 @@ export function makeStore() {
       // Before the API middleware: the cache must be gone by the time anything
       // reacts to the sign-out and starts fetching again.
       getDefault().prepend(cleanup.middleware).concat(authApi.middleware, walletApi.middleware),
+
+    /*
+     * Batch store notifications on a microtask rather than an animation frame
+     * (P-39).
+     *
+     * Redux Toolkit's default is `raf`, and its implementation schedules two
+     * things per notification: the frame, and a 100 ms `setTimeout` as a
+     * fallback. Whichever fires first calls `cancelAnimationFrame` to cancel
+     * the other. That is fine in a browser and unsafe under a test runner,
+     * because Vitest tears the jsdom environment down between files and the
+     * fallback timer can outlive it — the callback then reaches for
+     * `cancelAnimationFrame`, finds no global, and throws where no test can
+     * catch it. CI showed exactly that: 25 files passed, 298 tests passed, and
+     * the run failed on one uncaught `ReferenceError` attributed to a
+     * `Timeout.callback`.
+     *
+     * `tick` uses `queueMicrotask`, which drains at the end of the current task
+     * — before anything can be torn down — and schedules neither a frame nor a
+     * timer. The failure is not made less likely; it is made impossible,
+     * because nothing is left pending to fire.
+     *
+     * Sound in the browser too, and not a test-only concession. Notifications
+     * still coalesce within a task, which is where a burst of dispatches
+     * actually happens; what is given up is coalescing *across* tasks inside
+     * one frame, and the cost of that is a little more work per frame in
+     * exchange for lower latency.
+     */
+    enhancers: (getDefaultEnhancers) => getDefaultEnhancers({ autoBatch: { type: "tick" } }),
   })
 
   return store
