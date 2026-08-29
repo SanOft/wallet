@@ -14,6 +14,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx --env-file-if-exists=.env prisma/seed.ts",
+    "db:seed:demo": "tsx --env-file-if-exists=.env prisma/seed-demo.ts",
     "db:reconcile": "tsx --env-file-if-exists=.env src/jobs/reconcile.ts",
     "smoke": "tsx --env-file-if-exists=.env scripts/smoke.ts"
   },
