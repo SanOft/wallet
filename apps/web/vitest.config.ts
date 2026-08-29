@@ -21,6 +21,24 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./test/setup.ts"],
+
+    /*
+     * Above `asyncUtilTimeout` (10 000, `test/setup.ts`), deliberately.
+     *
+     * The two budgets are ordered, and the order is the whole point. When
+     * `waitFor` expires first it fails with the assertion — "expected the
+     * balance card to contain 1 250 000" — which names the screen, the value
+     * and the test. When Vitest's own timeout expires first it fails with
+     * "Test timed out in 5000ms", which names nothing and sends the reader to
+     * a stack trace pointing at the `it`.
+     *
+     * That is exactly what happened while diagnosing P-38: raising
+     * `asyncUtilTimeout` alone lifted it past the 5 000 ms default and turned
+     * four informative failures into five useless ones. A timeout is a
+     * diagnostic, so the one that fires first has to be the one that knows
+     * what it was waiting for.
+     */
+    testTimeout: 20_000,
     coverage: {
       provider: "v8",
       include: ["src/**/*.{ts,tsx}"],
