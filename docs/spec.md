@@ -1067,7 +1067,7 @@ The real test of a fintech UI is the unhappy paths. Defined behavior for each:
 | **R**epudiation            | "I never sent this money"                                                        | Every operation: ledger pair + `channel` + `requestId` logs + the transaction ID shown to the user | FR-5.3, NFR-5            |
 | **I**nformation disclosure | User enumeration (harvesting the number base via register/login/lookup)          | Generic messages + timing-safe + lookup rate limit 20/hour                                         | FR-1.5, FR-2.2, FR-4.9   |
 |                            | PII/secrets in logs                                                              | Log redaction list; code review checklist item                                                     | NFR-5.2                  |
-|                            | Token theft via XSS                                                              | Access token in memory only, refresh httpOnly; CSP (helmet)                                        | FR-2.4, NFR-1.8          |
+|                            | Token theft via XSS                                                              | Access token in memory only, refresh httpOnly; CSP on **both** origins — helmet on the API, `vercel.json` on the document origin where the token actually lives (P-23) | FR-2.4, NFR-1.8          |
 | **D**enial of service      | Login bombardment                                                                | Account lockout + IP rate limit combined                                                           | FR-2.3                   |
 |                            | Transfer spam                                                                    | Velocity check + daily limits + rate limit                                                         | FR-6.1–6.3               |
 | **E**levation of privilege | IDOR: sending money from someone else's account / reading someone else's history | Ownership predicate on every request; S-3 is a mandatory test                                      | FR-4.5, 18.2             |
@@ -1080,6 +1080,7 @@ The primary channel of money loss is deceiving the user. The controls live at th
 ### 17.3 Security checklist (phase B5 DoD)
 
 - [x] helmet active, CSP configured (`default-src 'none'` — an API serves no documents); CORS an explicit allowlist, never `*`
+- [x] A CSP on the **document** origin too (`apps/web/vercel.json`), which is where the access token lives and where the API's policy reaches nothing. `default-src 'none'`, no `'unsafe-inline'`, no `'unsafe-eval'`; pinned by `apps/web/test/csp.test.ts`, seven mutations caught. Delivery is unverified until T-6.1 wires Vercel up.
 - [x] Idempotency-Key enforcement tested on `/transfers` and `/accounts/topup`
 - [x] `yarn npm audit` clean; gitleaks in CI, pinned by image digest; `.env.example` present, `.env` untracked
 - [x] Log redaction tested against the bytes pino writes, including the access log's URL and query
