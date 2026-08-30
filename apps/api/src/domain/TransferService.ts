@@ -87,6 +87,61 @@ const SERIALIZATION_FAILURE = "P2034"
 /** Postgres 23505 — here it always means another request won a race. */
 const UNIQUE_VIOLATION = "P2002"
 
+/**
+ * The three ways this service finds an account, in one place (ADR-0011).
+ *
+ * There were seven inline `findFirst` calls in six shapes, which is a copy of
+ * the same rule per call site and the reason the account model is hard to
+ * change. ADR-0011 records why that matters: the pockets model — several
+ * same-currency accounts per user — is a change to account *resolution* and not
+ * to the ledger, so it lands here or it lands in seven places.
+ *
+ * A pure extraction. The predicates are byte-identical to the ones they
+ * replace; only the `select` is widened, because two call sites wanted the id
+ * alone and returning the balance as well costs a column on a row already being
+ * read. Postgres tracks Serializable conflicts per tuple rather than per
+ * column, so the transaction's read set is unchanged.
+ *
+ * `type: "USER"` is not decoration on any of them. Both user lookups exclude
+ * the treasury on purpose, and the comment on `accountForPhone` says why.
+ */
+interface AccountRef {
+  readonly id: string
+  readonly balance: bigint
+}
+
+/** FR-1.4: one account per user per currency, which is what `@@unique` says. */
+async function userAccount(tx: TransactionClient, userId: string): Promise<AccountRef | null> {
+  return tx.account.findFirst({
+    where: { userId, currency: "UZS", type: "USER" },
+    select: { id: true, balance: true },
+  })
+}
+
+/**
+ * Somebody else's account, by the number the sender typed.
+ *
+ * `type: "USER"` matters. The treasury has a phone that satisfies both the
+ * E.164 CHECK and the regional schema, so without this a user could pay money
+ * *into* the mint, where no code path can spend it — and `-treasury.balance`,
+ * the only measure of demo money issued (§9.4), would quietly stop meaning
+ * that.
+ */
+async function accountForPhone(tx: TransactionClient, phone: string): Promise<AccountRef | null> {
+  return tx.account.findFirst({
+    where: { user: { phone }, currency: "UZS", type: "USER" },
+    select: { id: true, balance: true },
+  })
+}
+
+/** §9.4's mint. A partial unique index permits exactly one (ADR-0001). */
+async function treasuryAccount(tx: TransactionClient): Promise<AccountRef | null> {
+  return tx.account.findFirst({
+    where: { type: "TREASURY", currency: "UZS" },
+    select: { id: true, balance: true },
+  })
+}
+
 function hasPrismaCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && (error as { code?: unknown }).code === code
 }
@@ -591,21 +646,10 @@ export class TransferService {
     // FR-4.5 / S-3: the sender account is resolved *through* the authenticated
     // user. There is no query in this method that could address an account the
     // caller does not own — an id in the request has nowhere to go.
-    const sender = await tx.account.findFirst({
-      where: { userId: input.senderUserId, currency: "UZS", type: "USER" },
-      select: { id: true, balance: true },
-    })
+    const sender = await userAccount(tx, input.senderUserId)
     if (!sender) throw new RecipientNotFoundError()
 
-    const recipient = await tx.account.findFirst({
-      // `type: "USER"` matters. The treasury has a phone that satisfies both
-      // the E.164 CHECK and the regional schema, so without this a user could
-      // pay money *into* the mint, where no code path can spend it — and
-      // `-treasury.balance`, the only measure of demo money issued (§9.4),
-      // would quietly stop meaning that.
-      where: { user: { phone: input.recipientPhone }, currency: "UZS", type: "USER" },
-      select: { id: true, balance: true },
-    })
+    const recipient = await accountForPhone(tx, input.recipientPhone)
     // Deliberately the same error as "you have no account": paying a number
     // must not reveal whether it is registered (FR-4.9).
     if (!recipient) throw new RecipientNotFoundError()
@@ -776,14 +820,8 @@ export class TransferService {
              */
             await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('wallet:treasury'))`
 
-            const treasury = await tx.account.findFirst({
-              where: { type: "TREASURY", currency: "UZS" },
-              select: { id: true, balance: true },
-            })
-            const account = await tx.account.findFirst({
-              where: { userId, currency: "UZS", type: "USER" },
-              select: { id: true, balance: true },
-            })
+            const treasury = await treasuryAccount(tx)
+            const account = await userAccount(tx, userId)
             // No treasury means the seed never ran; that is an operator fault,
             // not something to report as a user error.
             if (!treasury) throw new Error("treasury account is missing; run the seed")
@@ -880,22 +918,9 @@ export class TransferService {
         // would silently record nothing.
         const isTopUp = (input.type ?? "P2P") === "TOPUP"
 
-        const own = await tx.account.findFirst({
-          where: { userId: input.senderUserId, currency: "UZS", type: "USER" },
-          select: { id: true },
-        })
-        const treasury = isTopUp
-          ? await tx.account.findFirst({
-              where: { type: "TREASURY", currency: "UZS" },
-              select: { id: true },
-            })
-          : null
-        const counterparty = isTopUp
-          ? own
-          : await tx.account.findFirst({
-              where: { user: { phone: input.recipientPhone }, currency: "UZS", type: "USER" },
-              select: { id: true },
-            })
+        const own = await userAccount(tx, input.senderUserId)
+        const treasury = isTopUp ? await treasuryAccount(tx) : null
+        const counterparty = isTopUp ? own : await accountForPhone(tx, input.recipientPhone)
 
         const sender = isTopUp ? treasury : own
         const recipient = counterparty
