@@ -3,7 +3,7 @@ import type { PrismaClient } from "@prisma/client"
 import { DEMO_TOPUP_AMOUNT, maskRecipientName, TRANSFER_LIMITS } from "@wallet/shared"
 import request from "supertest"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import { seed } from "../prisma/seed.js"
+import { SYSTEM_PHONE, seed } from "../prisma/seed.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
 import { isHealthy, reconcile } from "../src/infra/reconciliation.js"
 import { buildApp, testEnv, uniquePhone } from "./helpers.js"
@@ -218,6 +218,50 @@ describe.skipIf(!hasDatabase)("day 5 — top-up, accounts and lookup", () => {
     it("refuses without a token", async () => {
       const { app } = buildApp(prisma, { ...process.env })
       expect((await request(app).get("/api/accounts")).status).toBe(401)
+    })
+  })
+
+  describe("the mint is not payable", () => {
+    it("refuses a transfer to the treasury's own number", async () => {
+      /*
+       * The treasury is owned by a real user row with a real phone, and
+       * `+998000000000` satisfies both the E.164 CHECK and the regional schema
+       * — so it is a number somebody can type into the wizard.
+       *
+       * Money paid there is gone: no code path spends from the treasury except
+       * the demo mint, and `-treasury.balance` is the total of demo money
+       * issued (§9.4), which would silently start counting a user's own money
+       * as issuance.
+       *
+       * `accountForPhone` carries `type: "USER"` to prevent exactly this, and
+       * the guard was uncovered until now — removing it left all 350 tests
+       * green, which is how the gap was found while extracting the lookup.
+       */
+      const sender = await newUser()
+      await request(sender.app)
+        .post("/api/accounts/topup")
+        .set("authorization", `Bearer ${sender.token}`)
+        .set("idempotency-key", randomUUID())
+        .send()
+
+      const res = await request(sender.app)
+        .post("/api/transfers")
+        .set("authorization", `Bearer ${sender.token}`)
+        .set("idempotency-key", randomUUID())
+        .send({ phone: SYSTEM_PHONE, amount: "100000" })
+
+      // The same refusal any unregistered number gets: paying a number must
+      // not reveal what is behind it (FR-4.9).
+      expect(res.status, JSON.stringify(res.body)).toBe(404)
+      expect(res.body.error.code).toBe("RECIPIENT_NOT_FOUND")
+
+      // And the mint is untouched, which is the thing that would be hard to
+      // notice later.
+      const treasury = await prisma.account.findFirstOrThrow({ where: { type: "TREASURY" } })
+      const entries = await prisma.ledgerEntry.count({
+        where: { accountId: treasury.id, amount: { gt: 0n } },
+      })
+      expect(entries, "somebody credited the treasury").toBe(0)
     })
   })
 

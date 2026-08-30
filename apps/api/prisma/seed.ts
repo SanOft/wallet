@@ -14,8 +14,14 @@ import { createPrismaClient } from "../src/infra/prisma.js"
  * so running this against a seeded database is a no-op rather than a duplicate.
  */
 
-/** Never used to sign in (§4). The hash is a sentinel, not a credential. */
-const SYSTEM_PHONE = "+998000000000"
+/**
+ * Never used to sign in (§4). The hash is a sentinel, not a credential.
+ *
+ * Exported so the test that proves nobody can pay the mint uses this number
+ * rather than a copy of it: the guard it exercises is worthless if the two ever
+ * drift apart.
+ */
+export const SYSTEM_PHONE = "+998000000000"
 const SYSTEM_PASSWORD_HASH = "!system-account-cannot-authenticate!"
 const TREASURY_CURRENCY = "UZS"
 
