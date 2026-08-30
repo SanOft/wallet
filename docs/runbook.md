@@ -575,8 +575,52 @@ Step-up hardening · history endpoint with filters · exchange rates · **the en
 
 ---
 
-## 5. Two standing rules
+## 5. Three standing rules
 
 **Architecture is frozen.** New ideas go to `docs/PARKING.md`, undiscussed, and are reopened in September. Reason: every re-design costs 2–3 hours, and there are 33 in total.
 
 **Push at the end of every day.** A day ends with `verify` green and a PR open. Never sleep on a half-broken state.
+
+**Prove the effect, and guard the proof.** A control is not tested by a test
+that shows the control is *present*. It is tested by one that shows it *works* —
+and by a second assertion that fails when the check itself stops working.
+
+This is written down because one day produced five instances of the same
+failure, every one of them green:
+
+| What was wrong | What said nothing |
+|---|---|
+| `globalRateLimit()` built per request, so every caller got a fresh counter and the limit never fired | the middleware was mounted, the branch ran, coverage counted it |
+| Five escalation assertions on the runtime role passed on a connection error (`28P01`) rather than a privilege refusal (`42501`) | `rejects.toThrow()` |
+| The contrast scan's regexes carried a literal backspace byte, so it found zero tokens | `it.each` over an empty list |
+| The layer guard's `code()` stripped string literals, so three of its four rules could never match | the rules were all plainly visible in the source |
+| Deploy monitors reported "settled" from a different commit's run, three times | the run they named really had finished |
+
+None of these is exotic. Each is the ordinary shape of a check that has stopped
+checking, and coverage cannot see any of them, because the code ran.
+
+What a guard looks like in practice, all of it already in the suite:
+
+- Assert the derived list is not empty before iterating it
+  (`scenario-coverage.test.ts`, `contrast.test.ts`).
+- Assert the *reason* a thing was refused, not that it threw
+  (`runtime-role.test.ts` rejects `28P01` explicitly).
+- Assert the fixture was read at all before asserting anything about it
+  (`layer-contract.test.ts` checks the domain directory has files).
+- Mutate the thing under test and require the test to fail. If it does not, the
+  test is describing the code rather than checking it.
+
+The last one is the whole rule in one line. Nothing here is a substitute for it.
+
+**And the same discipline applies to a red run.** A failure is explained, not
+classified. Twice in one day the classification would have been wrong in
+opposite directions: two suites timed out right after a change and the change
+looked like the cause, from one observation on each side — three more runs said
+it was load. Then a *documentation* commit turned `verify` red, which a change
+to prose cannot do, so the obvious reading was a flake. It was a `500` on the
+onboarding path: the advisory lock that queues concurrent top-ups had never been
+given a transaction budget sized for a queue, and one to five callers in twelve
+were being told the server had broken. It passes 3/3 in isolation and only
+appears under the load of a full run.
+
+Neither of those is found by re-running. Both are found by reading the failure.
