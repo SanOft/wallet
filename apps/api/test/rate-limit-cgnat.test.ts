@@ -130,7 +130,17 @@ describe.skipIf(!hasDatabase)("the login budget behind one shared address", () =
     // The control: the early attempts really did reach the credential check,
     // so this is a budget being spent rather than everything being refused.
     expect(refusedCredentials, "nothing reached the credential check").toBeGreaterThan(0)
-  })
+
+    /*
+     * Thirty seconds, declared rather than inherited, for the reason its
+     * sibling above already gives: sixty argon2 verifications is roughly 2.6 s
+     * of deliberate work before anything else. This one inherited five and
+     * passed until the machine was busy, then timed out at 5016 ms during a
+     * full `verify` — the same load-dependent shape as P-38. Measured at
+     * 2512 ms on an idle machine, so the budget covers a busy host rather than
+     * slow work.
+     */
+  }, 30_000)
 
   it("keeps counting successful registrations, because those are the thing capped", async () => {
     /*
@@ -153,5 +163,7 @@ describe.skipIf(!hasDatabase)("the login budget behind one shared address", () =
     }
 
     expect(refused, "successful registrations were not counted").toBeGreaterThan(0)
-  })
+
+    // Same reasoning as above; twenty-five registrations each hash a password.
+  }, 30_000)
 })

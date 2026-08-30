@@ -139,12 +139,24 @@ export function createApp({
    * in front: a gateway is one address for a whole network, and the first
    * limiter to refuse is the one that decides what the subscriber sees.
    */
+  /*
+   * Built once, outside the handler.
+   *
+   * Calling `globalRateLimit()` per request looked like the same thing and was
+   * not: `rateLimit()` constructs its own `MemoryStore` when none is passed, so
+   * every request got a counter starting at zero and the limit never fired.
+   * Nothing went red — the middleware was mounted, the code path ran, and the
+   * control was simply dead. Introduced with this exemption and caught by
+   * review rather than by a test, which is why there is now a test.
+   */
+  const globalLimit = globalRateLimit()
+
   app.use((req, res, next) => {
     if (req.path === USSD_GATEWAY_PATH) {
       next()
       return
     }
-    globalRateLimit()(req, res, next)
+    globalLimit(req, res, next)
   })
   /*
    * Separate budgets, because the two endpoints are limiting different things:
