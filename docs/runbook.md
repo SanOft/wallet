@@ -612,7 +612,7 @@ What a guard looks like in practice, all of it already in the suite:
 
 The last one is the whole rule in one line. Nothing here is a substitute for it.
 
-**And the same discipline applies to a red run.** A failure is explained, not
+*The same discipline applies to a red run.* A failure is explained, not
 classified. Twice in one day the classification would have been wrong in
 opposite directions: two suites timed out right after a change and the change
 looked like the cause, from one observation on each side — three more runs said
