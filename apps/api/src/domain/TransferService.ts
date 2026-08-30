@@ -870,7 +870,33 @@ export class TransferService {
            * The ledger invariants are enforced by the deferred triggers, which
            * are isolation-independent.
            */
-          { isolationLevel: "ReadCommitted" },
+          {
+            isolationLevel: "ReadCommitted",
+            /*
+             * A budget sized for a queue, because the advisory lock above makes
+             * this one.
+             *
+             * Prisma's defaults are two seconds to acquire a transaction and
+             * five to finish it, and neither was chosen with a lock in mind:
+             * the twelfth caller waits for eleven predecessors before it starts
+             * work of its own. Under load that overran both, and the overrun
+             * surfaced as `500 INTERNAL` on the onboarding path — measured, one
+             * to five failures in twelve, with
+             * `Transaction API error: Unable to start a transaction in the
+             * given time` in the log.
+             *
+             * The numbers follow the shape rather than the symptom: the wait
+             * scales with how many callers are queued, so it is the one that
+             * needs the most room. Twenty seconds of work is far more than a
+             * top-up needs and exists so a slow host queues rather than fails.
+             *
+             * This does not make the queue unbounded. Past these the request
+             * still fails — see P-40 for the second half, which is that it
+             * fails as `INTERNAL` when contention is not an internal fault.
+             */
+            maxWait: 15_000,
+            timeout: 20_000,
+          },
         )
       } catch (error) {
         if (isUniqueViolation(error)) {
