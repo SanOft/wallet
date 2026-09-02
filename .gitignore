@@ -3,6 +3,12 @@ dist/
 build/
 coverage/
 
+# Lighthouse JSON reports, written by `yarn workspace @wallet/web lighthouse`.
+# Kept on disk because they are what a failed budget is diagnosed from, and CI
+# uploads them as an artifact; never committed, because they are a measurement
+# of one machine at one moment.
+lighthouse-report/
+
 # Generated symlinks into .agents/skills, pointing at absolute paths on one
 # machine. `core.symlinks` is false on Windows, so git would commit them as text
 # files containing someone else's home directory. The skills themselves are

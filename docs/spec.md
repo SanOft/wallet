@@ -227,6 +227,61 @@ Every requirement is numbered and verifiable. Acceptance criteria are written in
 | LCP (mobile, 4G)                | < 2.5 s                 |
 | Initial JS bundle (gzip)        | < 200 KB                |
 
+### NFR-2.1 The budget CI enforces
+
+The table above states targets. This one states the ceilings a pull request is
+refused for crossing, which is a different and stricter thing: a target can be
+missed while somebody decides what to do about it, and a ceiling cannot.
+
+Enforced on `/login` against a production build, as the median of three
+Lighthouse runs per form factor, on a GitHub-hosted runner with Chrome pinned
+by image digest.
+
+| | mobile | desktop |
+| --- | --- | --- |
+| First Contentful Paint | ≤ 2200 ms | ≤ 700 ms |
+| Largest Contentful Paint | ≤ 2400 ms | ≤ 750 ms |
+| Total Blocking Time | ≤ 100 ms | ≤ 100 ms |
+| Speed Index | ≤ 2300 ms | ≤ 700 ms |
+| Cumulative Layout Shift | ≤ 0.02 | ≤ 0.02 |
+| Performance | ≥ 95 | ≥ 99 |
+| Accessibility | = 100 | = 100 |
+| Best practices | = 100 | = 100 |
+| SEO | = 100 | = 100 |
+
+**Metrics are the gate; the Performance score is a backstop.** The score is a
+weighted log-normal curve — First Contentful Paint 10%, Speed Index 10%,
+Largest Contentful Paint 25%, Total Blocking Time 30%, Cumulative Layout Shift
+25% — and above 0.96 it enters what Lighthouse's own documentation calls the
+point of diminishing returns, where a small metric move costs a whole point.
+Measured on this application, that is not theoretical: the mobile score flips
+between 97 and 98 on roughly 140 ms of Largest Contentful Paint, which is
+inside the runner's own noise. A score floor tight enough to catch a real
+regression would therefore fail for reasons that are not regressions. A metric
+ceiling has no such cliff, and when it trips it names the thing that moved.
+
+**Where the numbers come from.** Thirty samples — three separate runner
+machines, five runs each, both form factors, Lighthouse 13.4.1. Mobile
+observed: FCP 1908–1972 ms, LCP 2018–2180 ms, TBT 5–23 ms, CLS 0. Desktop
+observed: FCP 434–469 ms, LCP 462–502 ms, TBT 0, CLS 0. Each ceiling sits
+roughly 10–15% above the observed maximum, except Total Blocking Time, whose
+absolute spread is a few milliseconds and whose ceiling is set instead at the
+edge of Lighthouse's own "good" band.
+
+**The three deterministic categories are held at 100, not at 98.** Their audits
+are pass/fail rather than timed, and thirty samples returned 100 with zero
+spread. There is no noise to leave room for, so leaving room would only permit
+a regression.
+
+**Mobile Performance is not held at 98, and never was.** The runbook reported
+98 as a fixed value from a single run on a developer laptop. Measured properly
+it is a distribution: fifteen CI samples returned 97–98, and re-running the
+same build on that same laptop now returns 97, with FCP 1924 ms and LCP
+2188 ms — inside the CI range rather than above it. So 98 was not a faster
+machine, it was one draw from a two-valued number. The ≥ 90 in the table above
+is the product target and remains the contract; the ≥ 95 here is a backstop
+under the metric ceilings.
+
 ## NFR-3. Mobile-first
 
 - Designed from 360×640 up; desktop is progressive enhancement.

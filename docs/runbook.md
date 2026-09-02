@@ -103,22 +103,47 @@ yarn workspace @wallet/web preview --port 4174
 
 ### The four scores, and the floor under them
 
-All four Lighthouse categories are held at **98 or above**. Measured on
-2026-08-28 at Lighthouse 13.4.1 against a production build:
+CI enforces this now, and enforcing it corrected it. The budget is
+`docs/spec.md` NFR-2.1, the job is `lighthouse` in `.github/workflows/ci.yml`,
+and it can be run by hand with `yarn workspace @wallet/web lighthouse` on
+Linux. What follows is the measurement it came from.
+
+Thirty samples — three separate CI runner machines, five runs each, both form
+factors, Lighthouse 13.4.1, Chrome pinned by image digest, against a production
+build served by `vite preview`:
 
 | | desktop | mobile |
 |---|---|---|
-| Performance | 100 | **98** |
+| Performance | 100 | **97–98** |
 | Accessibility | 100 | 100 |
 | Best practices | 100 | 100 |
 | SEO | 100 | 100 |
+| FCP | 434–469 ms | 1908–1972 ms |
+| LCP | 462–502 ms | 2018–2180 ms |
+| TBT | 0 ms | 5–23 ms |
+| CLS | 0 | 0 |
+
+**The line that used to stand here said all four categories were held at 98 or
+above, from a single run on 2026-08-28.** Mobile performance is not 98 and was
+not then. It is a two-valued number: fifteen CI samples returned 97 or 98, and
+re-running the same build on the same laptop that produced the original figure
+now returns 97, at FCP 1924 ms and LCP 2188 ms — inside the CI range, not above
+it. The 98 was one draw reported as a constant, which is the specific way a
+number written down once becomes a claim nobody can check.
+
+Which is why the gate is on the metrics rather than on the score. Reading the
+report tells you why the score moves: FCP scores 0.86 and LCP 0.95–0.97, and
+every other metric scores a flat 1.000, so the whole 97-versus-98 question is
+about 140 ms of LCP — less than the spread between two runner machines. The
+three deterministic categories, having no spread at all, are gated at exactly
+100 rather than at 98.
 
 ```bash
-npx lighthouse http://localhost:4176/login   --only-categories=performance,accessibility,best-practices,seo   --chrome-flags="--headless=new" --output=json --output-path=lh.json
+npx lighthouse http://localhost:4173/login   --only-categories=performance,accessibility,best-practices,seo   --chrome-flags="--headless=new" --output=json --output-path=lh.json
 ```
 
-Mobile performance is **at the floor, with no headroom**: FCP 1.7s, LCP 2.0s,
-TBT 80ms under simulated throttling. That number is framework cost — React,
+Mobile performance has **little headroom**: FCP ~1.9s, LCP ~2.1s, TBT under
+25ms under simulated throttling. That number is framework cost — React,
 Redux Toolkit, RTK Query, the router and Zod are all needed to render a login
 form, and they are ~120 KB gzipped between them. Route splitting moved the
 signed-in screens out of the critical path, which was right on its own terms
