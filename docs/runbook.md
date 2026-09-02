@@ -179,9 +179,8 @@ single-route measurement would have been reported as a finding about that route.
 
 #### A code-split route is not style-split
 
-The first thing that will take the mobile score below 98 is not a heavy
-dependency. It is a new screen adding a handful of Tailwind utilities nothing
-else uses.
+The first thing that will move the mobile score is not a heavy dependency. It
+is a new screen adding a handful of Tailwind utilities nothing else uses.
 
 Tailwind emits **one** stylesheet for the whole application. A route can be
 behind `lazy()` and still put its utilities in the render-blocking CSS that the
@@ -189,6 +188,12 @@ login screen waits for. F7 did exactly that: ten new classes, 389 bytes, and
 Lighthouse mobile performance fell from 98 to 97 — LCP from ~2020 ms to
 ~2180 ms, with FCP and TBT unchanged, reproduced across nine interleaved pairs
 against `main` on a quiet machine.
+
+That measurement and the distribution above are the same finding seen twice.
+389 bytes of render-blocking CSS moved LCP about 160 ms, and 140 ms of LCP is
+the whole distance between a 97 and a 98 — which is why the effect was real,
+why reporting it as a score made it look like a cliff, and why the CI budget is
+on LCP rather than on the number it happens to produce.
 
 The fix is to write a lazy route's own layout as inline `style`, so the bytes
 land in that route's chunk. Two things are worth knowing before spending an
