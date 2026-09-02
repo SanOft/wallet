@@ -27,28 +27,25 @@
  * green is the failure this file exists to prevent; raising it in the spec
  * costs a sentence saying why, which is the point.
  *
- * **Known: this does not run to completion on Windows.** Not because of
- * anything here — the bare `lighthouse` CLI fails identically, with no server
- * of ours involved. Once Chrome exits, `chrome-launcher` deletes the temporary
- * profile it created; Windows still holds a handle to it, and the `EPERM` from
- * that `rmSync` becomes the CLI's exit code. It skips the delete only when the
- * caller supplies its own `userDataDir`, which the Lighthouse CLI does not
- * expose (chrome-launcher/dist/chrome-launcher.js:357-367). The measurement
- * itself finishes and the report it writes is sound — a Windows run of this
- * file produced Performance 97, FCP 1992 ms, LCP 2118 ms, `runtimeError` null,
- * squarely inside the CI range — but the exit code says otherwise.
- *
- * A non-zero exit is deliberately still treated as a failure. Accepting one
- * because a report happened to appear is how a check stops being able to fail,
- * and that is the thing this job exists to prevent. Run it on Linux — which is
- * where CI runs it — or read the report artifact from the CI job.
+ * **What it can and cannot catch.** The ceilings sit above the observed spread,
+ * so the smallest regression this refuses is roughly the gap between the two:
+ * about 227 ms of Largest Contentful Paint, 279 ms of First Contentful Paint.
+ * The F7 regression recorded in the runbook — ten Tailwind classes, 389 bytes,
+ * ~160 ms of LCP — is *below* that and would pass. That is not a hole to plug
+ * by tightening the numbers: 160 ms is inside the runner-to-runner spread, so a
+ * ceiling that caught it would also fail on an unchanged build. Catching an
+ * effect that small needs a comparison against the same machine's own baseline,
+ * which is a different mechanism and a different piece of work. What this
+ * refuses is a regression bigger than the noise, which is the class that
+ * reaches users.
  */
 
-import { spawn } from "node:child_process"
-import { mkdirSync, readFileSync, rmSync } from "node:fs"
-import { createRequire } from "node:module"
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { type LaunchedChrome, launch } from "chrome-launcher"
+import lighthouse, { desktopConfig } from "lighthouse"
 import { preview } from "vite"
 import { EXIT_CANNOT_MEASURE, EXIT_OVER_BUDGET } from "./lighthouse-exit-codes.ts"
 
@@ -58,7 +55,8 @@ const REPORT_DIR = join(WEB_ROOT, "lighthouse-report")
 /**
  * The route. `/login` is the only one a plain Lighthouse run can reach —
  * everything else is behind a session — and it is also the anonymous critical
- * path, so it is the one whose cost every first-time user pays.
+ * path, so it is the one whose cost every first-time user pays. The routes it
+ * does not cover are P-42 in docs/PARKING.md.
  */
 const ROUTE = "/login"
 
@@ -69,13 +67,8 @@ const ROUTE = "/login"
  */
 const RUNS = 3
 
-/**
- * Fixed rather than ephemeral, and strict. A port already in use means some
- * other server would answer, and a budget measured against somebody else's
- * `dist` is worse than no budget at all — it is a green that means nothing.
- * Failing to bind is the correct outcome.
- */
-const PORT = 4173
+/** Names this script's temporary Chrome profiles so the sweep can find them. */
+const PROFILE_PREFIX = "wallet-lh-"
 
 type FormFactor = "mobile" | "desktop"
 
@@ -109,23 +102,22 @@ const BUDGET: readonly Limit[] = [
   { label: "seo", kind: "floor", unit: "score", mobile: 100, desktop: 100 },
 ]
 
-const CATEGORIES = ["performance", "accessibility", "best-practices", "seo"] as const
+const CATEGORIES = ["performance", "accessibility", "best-practices", "seo"]
 
 type Report = {
   readonly lighthouseVersion: string
   readonly environment: { readonly hostUserAgent: string }
-  readonly categories: Record<string, { readonly score: number | null }>
-  readonly audits: Record<string, { readonly numericValue?: number }>
+  readonly categories: Record<string, { readonly score: number | null } | undefined>
+  readonly audits: Record<string, { readonly numericValue?: number | undefined } | undefined>
+  readonly runtimeError?: { readonly code: string; readonly message: string } | undefined
 }
 
-function lighthouseCli(): string {
-  // `bin.lighthouse` in the package manifest. Resolved rather than assumed to
-  // sit in `.bin`, because the layout there differs between package managers
-  // and between platforms.
-  return createRequire(import.meta.url).resolve("lighthouse/cli/index.js")
+function fail(message: string): never {
+  console.error(`\nlighthouse-budget: ${message}`)
+  process.exit(EXIT_CANNOT_MEASURE)
 }
 
-function chromeFlags(): string {
+function chromeFlags(): string[] {
   const flags = ["--headless=new"]
   if (process.env.CI) {
     // The CI job runs as root inside a container, where Chrome's sandbox
@@ -133,66 +125,137 @@ function chromeFlags(): string {
     // Neither is true on a developer machine, so neither is passed there.
     flags.push("--no-sandbox", "--disable-dev-shm-usage")
   }
-  return flags.join(" ")
+  return flags
 }
 
+/**
+ * Runs Lighthouse against an already-running Chrome that this function starts
+ * and stops itself.
+ *
+ * Through the Node API rather than the `lighthouse` binary, and launching
+ * Chrome here rather than letting the CLI do it, for one concrete reason:
+ * `chrome-launcher` deletes the profile directory it created once Chrome
+ * exits, and on Windows the handle is still open, so that `rmSync` throws
+ * `EPERM` and the CLI turns a completed measurement into a non-zero exit. It
+ * skips the delete entirely when the caller supplies `userDataDir`
+ * (chrome-launcher/dist/chrome-launcher.js:357), so the profile is ours, and
+ * so is tidying it up.
+ *
+ * Removing the child process also removed the deadlock that shipped in the
+ * first version of this file: the preview server runs in this process, and a
+ * synchronous spawn froze the event loop that served it, so Chrome asked for
+ * the page and nothing answered.
+ */
 async function runLighthouse(url: string, form: FormFactor, run: number): Promise<Report> {
-  const output = join(REPORT_DIR, `${form}-${run}.json`)
-  const args = [
-    lighthouseCli(),
-    url,
-    `--only-categories=${CATEGORIES.join(",")}`,
-    `--chrome-flags=${chromeFlags()}`,
-    "--output=json",
-    `--output-path=${output}`,
-    "--quiet",
-  ]
-  if (form === "desktop") args.push("--preset=desktop")
+  const profile = mkdtempSync(join(tmpdir(), PROFILE_PREFIX))
 
-  /*
-   * `spawn`, awaited — never `spawnSync`.
-   *
-   * The preview server above runs inside *this* process, so a synchronous
-   * spawn blocks the event loop that serves it: Chrome asks for the page,
-   * nothing answers, and ten minutes later Lighthouse gives up with
-   * "Protocol error (Page.navigate): Target closed". That is what the first
-   * version of this file did, and the failure looks like a browser problem
-   * rather than like the deadlock it is.
-   */
-  const status = await new Promise<number | null>((settle, fail) => {
-    const child = spawn(process.execPath, args, { stdio: ["ignore", "inherit", "inherit"] })
-    child.on("error", fail)
-    child.on("close", settle)
+  const chrome = await launch({
+    chromeFlags: chromeFlags(),
+    userDataDir: profile,
+    logLevel: "silent",
+    // `exactOptionalPropertyTypes` forbids passing an explicit `undefined`, so
+    // the key is present only when CI has set it. Without it chrome-launcher
+    // finds the browser itself, which is what a developer machine wants.
+    ...(process.env.CHROME_PATH ? { chromePath: process.env.CHROME_PATH } : {}),
   })
 
-  if (status !== 0) {
-    console.error(`\nlighthouse-budget: lighthouse exited ${status} on the ${form} run.`)
-    console.error("This is a failure to measure, not a verdict on the build.")
-    process.exit(EXIT_CANNOT_MEASURE)
-  }
+  try {
+    const result = await lighthouse(
+      url,
+      { port: chrome.port, onlyCategories: CATEGORIES, logLevel: "silent" },
+      form === "desktop" ? desktopConfig : undefined,
+    )
+    if (result === undefined) fail(`lighthouse produced no result on the ${form} run.`)
 
-  return JSON.parse(readFileSync(output, "utf8")) as Report
+    const report = result.lhr as unknown as Report
+
+    // A run can come back with a report *and* a runtime error, and the metrics
+    // in it are then meaningless. Judging a build on those would be a verdict
+    // reached from nothing, so it is a failure to measure rather than a
+    // failure of the build.
+    if (report.runtimeError && report.runtimeError.code !== "NO_ERROR") {
+      fail(`lighthouse reported ${report.runtimeError.code}: ${report.runtimeError.message}`)
+    }
+
+    writeFileSync(join(REPORT_DIR, `${form}-${run}.json`), JSON.stringify(report, null, 1))
+    return report
+  } finally {
+    await stopChrome(chrome)
+    discard(profile)
+  }
+}
+
+/**
+ * Kills Chrome and waits for it to actually be gone.
+ *
+ * `chrome-launcher`'s `kill()` is synchronous and does not wait: on Windows it
+ * sends `taskkill` and returns immediately (chrome-launcher.js:322-349), so the
+ * process is still shutting down and still holding its profile open. Deleting
+ * the directory at that moment fails with `EPERM` — which is the whole reason
+ * the CLI cannot finish a run on Windows, arrived at from the other side.
+ * Retrying the delete for a couple of seconds was not enough; waiting for the
+ * process to close is, because that is the event the handles are released by.
+ *
+ * The timeout exists so a Chrome that refuses to die stalls the profile
+ * cleanup rather than the whole run.
+ */
+function stopChrome(chrome: LaunchedChrome): Promise<void> {
+  const gone = new Promise<void>((done) => {
+    if (chrome.process.exitCode !== null || chrome.process.signalCode !== null) {
+      done()
+      return
+    }
+    chrome.process.once("close", () => done())
+    setTimeout(done, 10_000).unref()
+  })
+
+  chrome.kill()
+  return gone
+}
+
+/** Removes a directory, reporting rather than throwing if it will not go. */
+function discard(directory: string): void {
+  try {
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+  } catch {
+    // Not fatal, and not silent either. The sweep at the start of the next run
+    // is what stops one of these becoming a pile of them.
+    console.warn(`  (could not remove ${directory}; the next run will sweep it)`)
+  }
+}
+
+/**
+ * Removes profiles an earlier run left behind.
+ *
+ * A cleanup that can fail needs somewhere for its failures to go, or "best
+ * effort" quietly means "a few hundred megabytes per week in the temp
+ * directory". Only this script's own prefix is touched, and only in the
+ * system temp directory.
+ */
+function sweepOldProfiles(): void {
+  let left: string[]
+  try {
+    left = readdirSync(tmpdir()).filter((name) => name.startsWith(PROFILE_PREFIX))
+  } catch {
+    return
+  }
+  for (const name of left) discard(join(tmpdir(), name))
+  if (left.length > 0) console.log(`  swept ${left.length} Chrome profile(s) from an earlier run`)
 }
 
 /** The observed value for one budget row, from one report. */
 function observed(report: Report, limit: Limit): number {
   if (limit.kind === "floor") {
     const score = report.categories[limit.label]?.score
-    if (typeof score !== "number") {
-      // A category that did not run scores `null`, and `null` compared against
-      // a floor would sail through as 0 or as NaN depending on the operator.
-      // Neither is a pass, and neither should look like one.
-      console.error(`\nlighthouse-budget: category "${limit.label}" produced no score.`)
-      process.exit(EXIT_CANNOT_MEASURE)
-    }
+    // A category that did not run scores `null`, and `null` compared against a
+    // floor would sail through as 0 or as NaN depending on the operator.
+    // Neither is a pass, and neither should look like one.
+    if (typeof score !== "number") fail(`category "${limit.label}" produced no score.`)
     return Math.round(score * 100)
   }
 
   const value = report.audits[limit.label]?.numericValue
-  if (typeof value !== "number") {
-    console.error(`\nlighthouse-budget: audit "${limit.label}" produced no value.`)
-    process.exit(EXIT_CANNOT_MEASURE)
-  }
+  if (typeof value !== "number") fail(`audit "${limit.label}" produced no value.`)
   return value
 }
 
@@ -209,18 +272,34 @@ function format(value: number, unit: Limit["unit"]): string {
   return value.toFixed(3)
 }
 
+/*
+ * An ephemeral port, and the URL read back from the server rather than
+ * assembled from a number we chose.
+ *
+ * A fixed port needed `strictPort` to stop the run measuring somebody else's
+ * `dist` — `yarn workspace @wallet/web preview` takes Vite's default 4173, so
+ * a preview left open in another terminal was a real collision. Moving to
+ * another fixed port would only move the collision; asking for a free one
+ * removes it, and taking the address from `resolvedUrls` means there is no
+ * number left to guess wrong.
+ */
 const server = await preview({
   root: WEB_ROOT,
-  preview: { port: PORT, strictPort: true },
+  preview: { port: 0 },
   logLevel: "warn",
 })
 
-const url = `http://localhost:${PORT}${ROUTE}`
+const origin = server.resolvedUrls?.local[0]
+if (origin === undefined) fail("the preview server reported no address to measure.")
+
+const url = new URL(ROUTE, origin).toString()
 const failures: string[] = []
 
 try {
   rmSync(REPORT_DIR, { recursive: true, force: true })
   mkdirSync(REPORT_DIR, { recursive: true })
+  console.log(`\n  serving ${WEB_ROOT}/dist at ${origin}`)
+  sweepOldProfiles()
 
   for (const form of ["mobile", "desktop"] as const) {
     const reports: Report[] = []

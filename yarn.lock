@@ -3712,6 +3712,7 @@ __metadata:
     "@vitest/coverage-v8": "npm:4.1.11"
     "@wallet/shared": "workspace:^"
     axe-core: "npm:^4.13.0"
+    chrome-launcher: "npm:1.2.1"
     fake-indexeddb: "npm:^6.2.5"
     idb: "npm:^8.0.3"
     jsdom: "npm:^30.0.1"
@@ -4192,7 +4193,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"chrome-launcher@npm:^1.2.1":
+"chrome-launcher@npm:1.2.1, chrome-launcher@npm:^1.2.1":
   version: 1.2.1
   resolution: "chrome-launcher@npm:1.2.1"
   dependencies:
