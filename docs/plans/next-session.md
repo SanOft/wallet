@@ -36,7 +36,10 @@ docker compose up -d          # wallet-postgres-1 → 127.0.0.1:5434
 yarn verify                   # lint && build && typecheck && test
 ```
 
-Last green run: **352 API + 62 shared + 308 web = 722**.
+Last green run on `main` as this was written: **351 API + 62 shared + 308 web =
+721**. The figure moves with every PR, so treat a mismatch as staleness in this
+line rather than as a missing test — and re-derive it from your own run instead
+of trusting it.
 
 `yarn verify` is defined in the root `package.json` and chains with `&&`, so a
 non-zero exit is real. **Read the exit code — do not read the harness's.** A
