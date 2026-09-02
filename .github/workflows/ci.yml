@@ -167,8 +167,11 @@ jobs:
   # The cost is wall-clock in a parallel job, not developer time.
   lighthouse:
     runs-on: ubuntu-latest
-    # Observed: about nine minutes, most of it the twelve Lighthouse runs.
-    timeout-minutes: 20
+    # Twelve Lighthouse runs — six for the control, six for the budget — at
+    # roughly 30 seconds each, plus the image pull, the install and the build.
+    # The first version set 20 and the job was cancelled mid-measurement, which
+    # is a red check that says nothing about the build.
+    timeout-minutes: 30
 
     # The browser pinned by digest, the way the database is above (P-3). Chrome
     # is the single largest input to a Lighthouse number, and an unpinned one

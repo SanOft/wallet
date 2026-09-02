@@ -27,27 +27,30 @@
  * green is the failure this file exists to prevent; raising it in the spec
  * costs a sentence saying why, which is the point.
  *
- * **Known: this does not run on Windows.** Not because of anything here — the
- * bare `lighthouse` CLI fails the same way. `chrome-launcher` deletes the
- * temporary profile it created once Chrome exits, Windows still holds a handle
- * to it, and the `EPERM` from that `rmSync` becomes the CLI's exit code
- * (node_modules/chrome-launcher/dist/chrome-launcher.js:351-367, which skips
- * the delete only when the caller supplied its own `userDataDir` — the
- * Lighthouse CLI does not). The measurement itself completes and the report it
- * writes is sound; only the exit code is wrong.
+ * **Known: this does not run to completion on Windows.** Not because of
+ * anything here — the bare `lighthouse` CLI fails identically, with no server
+ * of ours involved. Once Chrome exits, `chrome-launcher` deletes the temporary
+ * profile it created; Windows still holds a handle to it, and the `EPERM` from
+ * that `rmSync` becomes the CLI's exit code. It skips the delete only when the
+ * caller supplies its own `userDataDir`, which the Lighthouse CLI does not
+ * expose (chrome-launcher/dist/chrome-launcher.js:357-367). The measurement
+ * itself finishes and the report it writes is sound — a Windows run of this
+ * file produced Performance 97, FCP 1992 ms, LCP 2118 ms, `runtimeError` null,
+ * squarely inside the CI range — but the exit code says otherwise.
  *
  * A non-zero exit is deliberately still treated as a failure. Accepting one
  * because a report happened to appear is how a check stops being able to fail,
- * and that is the thing this whole job exists to prevent. Run it on Linux —
- * which is where CI runs it — or read the report artifact from the CI job.
+ * and that is the thing this job exists to prevent. Run it on Linux — which is
+ * where CI runs it — or read the report artifact from the CI job.
  */
 
-import { spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { mkdirSync, readFileSync, rmSync } from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { preview } from "vite"
+import { EXIT_CANNOT_MEASURE, EXIT_OVER_BUDGET } from "./lighthouse-exit-codes.ts"
 
 const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const REPORT_DIR = join(WEB_ROOT, "lighthouse-report")
@@ -133,7 +136,7 @@ function chromeFlags(): string {
   return flags.join(" ")
 }
 
-function runLighthouse(url: string, form: FormFactor, run: number): Report {
+async function runLighthouse(url: string, form: FormFactor, run: number): Promise<Report> {
   const output = join(REPORT_DIR, `${form}-${run}.json`)
   const args = [
     lighthouseCli(),
@@ -146,10 +149,26 @@ function runLighthouse(url: string, form: FormFactor, run: number): Report {
   ]
   if (form === "desktop") args.push("--preset=desktop")
 
-  const result = spawnSync(process.execPath, args, { stdio: ["ignore", "inherit", "inherit"] })
-  if (result.status !== 0) {
-    console.error(`\nlighthouse-budget: lighthouse exited ${result.status} on the ${form} run.`)
-    process.exit(1)
+  /*
+   * `spawn`, awaited — never `spawnSync`.
+   *
+   * The preview server above runs inside *this* process, so a synchronous
+   * spawn blocks the event loop that serves it: Chrome asks for the page,
+   * nothing answers, and ten minutes later Lighthouse gives up with
+   * "Protocol error (Page.navigate): Target closed". That is what the first
+   * version of this file did, and the failure looks like a browser problem
+   * rather than like the deadlock it is.
+   */
+  const status = await new Promise<number | null>((settle, fail) => {
+    const child = spawn(process.execPath, args, { stdio: ["ignore", "inherit", "inherit"] })
+    child.on("error", fail)
+    child.on("close", settle)
+  })
+
+  if (status !== 0) {
+    console.error(`\nlighthouse-budget: lighthouse exited ${status} on the ${form} run.`)
+    console.error("This is a failure to measure, not a verdict on the build.")
+    process.exit(EXIT_CANNOT_MEASURE)
   }
 
   return JSON.parse(readFileSync(output, "utf8")) as Report
@@ -164,7 +183,7 @@ function observed(report: Report, limit: Limit): number {
       // a floor would sail through as 0 or as NaN depending on the operator.
       // Neither is a pass, and neither should look like one.
       console.error(`\nlighthouse-budget: category "${limit.label}" produced no score.`)
-      process.exit(1)
+      process.exit(EXIT_CANNOT_MEASURE)
     }
     return Math.round(score * 100)
   }
@@ -172,7 +191,7 @@ function observed(report: Report, limit: Limit): number {
   const value = report.audits[limit.label]?.numericValue
   if (typeof value !== "number") {
     console.error(`\nlighthouse-budget: audit "${limit.label}" produced no value.`)
-    process.exit(1)
+    process.exit(EXIT_CANNOT_MEASURE)
   }
   return value
 }
@@ -205,7 +224,7 @@ try {
 
   for (const form of ["mobile", "desktop"] as const) {
     const reports: Report[] = []
-    for (let run = 1; run <= RUNS; run++) reports.push(runLighthouse(url, form, run))
+    for (let run = 1; run <= RUNS; run++) reports.push(await runLighthouse(url, form, run))
 
     const first = reports[0]
     if (first === undefined) throw new Error("no reports")
@@ -248,7 +267,7 @@ if (failures.length > 0) {
       "spec, with the reason written down — not a number to edit here to get green.\n" +
       `The reports behind these figures are in ${REPORT_DIR}.`,
   )
-  process.exit(1)
+  process.exit(EXIT_OVER_BUDGET)
 }
 
 console.log("\n  within budget on every metric and every category.\n")

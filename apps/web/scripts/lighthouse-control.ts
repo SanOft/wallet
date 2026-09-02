@@ -28,6 +28,7 @@ import { spawnSync } from "node:child_process"
 import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { EXIT_OVER_BUDGET } from "./lighthouse-exit-codes.ts"
 
 const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const INDEX = join(WEB_ROOT, "dist", "index.html")
@@ -81,6 +82,25 @@ if (status === 0) {
       `A ${BUSY_MS} ms synchronous script in <head> was added to dist/index.html and the\n` +
       "budget still reported green. Whatever it is measuring, it is not this build, so a\n" +
       "green result from it means nothing. Fix the budget before trusting the job again.",
+  )
+  process.exit(1)
+}
+
+if (status !== EXIT_OVER_BUDGET) {
+  /*
+   * The whole point of checking the exact code.
+   *
+   * The first version of this file accepted any non-zero exit, and passed on
+   * its first run for the wrong reason entirely: the budget had not refused
+   * the weighted build, Lighthouse had crashed, and a crash is non-zero too.
+   * A control that cannot tell "refused" from "broke" is not a control — it
+   * is a second thing that needs one.
+   */
+  console.error(
+    `\nlighthouse-control: the budget exited ${status}, not ${EXIT_OVER_BUDGET}.\n\n` +
+      "That is the code for a failure to measure, not for a build over budget. The\n" +
+      "weighted build was never actually judged, so this run proves nothing about\n" +
+      "whether the budget can fail. Read the output above for why the run broke.",
   )
   process.exit(1)
 }
