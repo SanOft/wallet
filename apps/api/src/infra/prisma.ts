@@ -22,6 +22,59 @@ export function createPrismaClient(env: Pick<Env, "DATABASE_URL">): PrismaClient
   return new PrismaClient({ adapter })
 }
 
+/**
+ * What the connecting role is allowed to do (P-4).
+ *
+ * ADR-0001 puts the ledger's invariants in the database so a bug in service
+ * code cannot corrupt them, and that argument holds only against a role which
+ * cannot rewrite the rules. `prisma/runtime-role.sql` creates one; whether the
+ * deployment actually *uses* it is a fact about the environment that the code
+ * cannot know, and until now nothing said either way.
+ *
+ * Reported at startup rather than on `/health`. The proxy-hop count is on
+ * `/health` because a count of forwarded-for entries tells an attacker nothing;
+ * "this API connects as a superuser" tells them the blast radius of compromising
+ * it, which is exactly the thing not to publish. An operator reads the deploy
+ * log anyway.
+ */
+export interface ConnectionPrivileges {
+  readonly role: string
+  readonly superuser: boolean
+  /** Tables in `public` owned by this role. The runtime role must own none. */
+  readonly ownedTables: number
+}
+
+interface PrivilegeRow {
+  readonly role: string
+  readonly superuser: boolean
+  readonly owned: bigint
+}
+
+export async function checkPrivileges(prisma: PrismaClient): Promise<ConnectionPrivileges | null> {
+  try {
+    const rows = await prisma.$queryRaw<PrivilegeRow[]>`
+      SELECT current_user::text                                  AS "role",
+             COALESCE(r.rolsuper, false)                         AS "superuser",
+             (SELECT count(*) FROM pg_tables
+               WHERE schemaname = 'public'
+                 AND tableowner = current_user)                  AS "owned"
+        FROM pg_roles r
+       WHERE r.rolname = current_user
+    `
+    const row = rows[0]
+    if (!row) return null
+
+    return { role: row.role, superuser: row.superuser, ownedTables: Number(row.owned) }
+  } catch {
+    /*
+     * Never fatal. This is a diagnostic about the deployment, and a service
+     * that refused to boot because it could not read `pg_roles` would be an
+     * outage caused by a report.
+     */
+    return null
+  }
+}
+
 export type DatabaseHealth =
   | { readonly ok: true; readonly migration: string | null }
   | { readonly ok: false; readonly error: string }

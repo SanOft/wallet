@@ -4,7 +4,7 @@ import { Client } from "pg"
 import request from "supertest"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
-import { createPrismaClient } from "../src/infra/prisma.js"
+import { checkPrivileges, createPrismaClient } from "../src/infra/prisma.js"
 import { buildApp, testEnv, uniquePhone } from "./helpers.js"
 
 /**
@@ -174,6 +174,29 @@ describe.skipIf(!hasDatabase)("the runtime role (P-4)", () => {
     const history = await request(app).get("/api/transfers").set("authorization", `Bearer ${token}`)
     expect(history.status).toBe(200)
   }, 60_000)
+
+  it("is reported as least-privilege, where the owner is reported as not", async () => {
+    /*
+     * The startup diagnostic, checked against both roles at once (P-4).
+     *
+     * A report that says "least privilege" whatever it is connected to is worse
+     * than no report: it would let the deploy log confirm a fix that never
+     * happened. So the assertion is the *difference* — the same function must
+     * say something different about the owner.
+     */
+    const asRuntime = await checkPrivileges(runtime)
+    expect(asRuntime, "the privilege query failed").not.toBeNull()
+    expect(asRuntime?.role).toBe("wallet_runtime")
+    expect(asRuntime?.superuser, "the runtime role is a superuser").toBe(false)
+    expect(asRuntime?.ownedTables, "the runtime role owns tables").toBe(0)
+
+    const asOwner = await checkPrivileges(owner)
+    expect(asOwner, "the privilege query failed for the owner").not.toBeNull()
+    expect(
+      asOwner?.superuser === true || (asOwner?.ownedTables ?? 0) > 0,
+      "the owner was reported as least-privilege, so the check cannot tell them apart",
+    ).toBe(true)
+  })
 
   it("cannot disable the trigger that holds the ledger together", async () => {
     // The exact statement the day-6 migration needed the owner for, and the one
