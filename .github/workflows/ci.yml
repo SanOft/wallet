@@ -4,6 +4,20 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Because otherwise there is no way to run CI against `main` at all.
+  #
+  # `main` is push-protected, so the only thing that lands on it is a merge,
+  # and the only run it gets is the one that merge happens to trigger. On
+  # 2026-09-02 the merge of #87 triggered nothing — no run, no check, no error;
+  # the push simply produced no workflow run, with Actions enabled and the file
+  # valid, as it had for the merge twenty minutes earlier. There was then no
+  # supported way to ask for one: `gh run rerun` re-runs an old commit, and
+  # pushing an empty commit is what the branch protection exists to prevent.
+  #
+  # One line, and the gap closes. Worth knowing rather than fixing blind: a
+  # missing run is not a failing one, and nothing here reports the difference —
+  # a commit on `main` with no CI run at all still shows a clean history.
+  workflow_dispatch:
 
 # Read-only, and stated rather than inherited (P-5). The default for a
 # repository can be write, which would hand every third-party action in this
