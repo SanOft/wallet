@@ -152,6 +152,94 @@ jobs:
           DATABASE_URL: postgresql://migrator:migrator@localhost:5432/wallet_asdeployed?schema=public
         run: yarn prisma migrate deploy
 
+  # The Lighthouse budget (docs/spec.md, NFR-2.1), and the control that proves
+  # the budget can fail.
+  #
+  # This job exists because four category scores were written down in
+  # `docs/runbook.md` as a quality bar and nothing checked them. A written
+  # budget that nothing enforces reads as a decision while being an intention —
+  # the same failure `size-budget.ts` was written to close for the bundle.
+  #
+  # It runs on every pull request rather than only on ones touching `apps/web`.
+  # A `paths` filter would skip the job on the others, and a skipped job is not
+  # a failed one, so the aggregate below would have to treat "skipped" as a
+  # pass. That is precisely the shape of gate this repository has been removing.
+  # The cost is wall-clock in a parallel job, not developer time.
+  lighthouse:
+    runs-on: ubuntu-latest
+    # Observed 3m22s: 72s for the control's six Lighthouse runs, 68s for the
+    # budget's six, the rest image pull, install and build. Fifteen leaves room
+    # for a cold cache without leaving room for a hang, which is the same
+    # reasoning as the ten on the test job.
+    #
+    # Worth knowing before raising this: the first version of the job ran for
+    # twenty minutes and was cancelled part-way through the measurement, and
+    # that was not slowness. The budget was deadlocked against its own preview
+    # server. A Lighthouse run here takes about twelve seconds; a run taking
+    # minutes is a bug, not a busy runner.
+    timeout-minutes: 15
+
+    # The browser pinned by digest, the way the database is above (P-3). Chrome
+    # is the single largest input to a Lighthouse number, and an unpinned one
+    # turns "the score moved" into a question nobody can answer — the build
+    # changed, or Chrome did, and the run cannot say which.
+    #
+    # Pinning it as the job's container rather than installing a browser also
+    # pins the Node, the glibc and the fonts, which all reach the measurement.
+    # mcr.microsoft.com/playwright:v1.62.1-noble, multi-arch index digest.
+    #
+    # The default /dev/shm in a container is 64 MB and Chrome needs more than
+    # that to render without falling back to disk, which would show up as a
+    # slower page rather than as an error.
+    container:
+      image: mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+      options: --shm-size=1g
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: locate the pinned browser
+        run: |
+          CHROME="$(find /ms-playwright/chromium-* -maxdepth 3 -type f -name chrome | head -1)"
+          if [ -z "$CHROME" ]; then
+            echo "::error::no chromium in the pinned image — the digest moved or the layout changed"
+            exit 1
+          fi
+          echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
+          "$CHROME" --version
+
+      - run: corepack enable
+      - run: yarn install --immutable
+
+      # `@wallet/shared` first. The web build imports it through `dist`, which
+      # only exists because the root `build` script runs `--topological`;
+      # building the web workspace alone fails to resolve the import.
+      - name: build the production bundle
+        run: |
+          yarn workspace @wallet/shared build
+          yarn workspace @wallet/web build
+
+      # The control runs before the measurement, for the same reason the
+      # migrations job proves its role is restricted before applying anything:
+      # a reading from an instrument that has not been shown to respond is not
+      # evidence. This weights `dist/index.html` with a 600 ms blocking script
+      # and requires the budget to refuse it. If the budget passes that, the
+      # job fails here and the green below would have meant nothing.
+      - name: control — a deliberately heavy build must blow the budget
+        run: yarn workspace @wallet/web lighthouse:control
+
+      - name: the budget itself
+        run: yarn workspace @wallet/web lighthouse
+
+      # The reports are what a red budget is diagnosed from. Uploaded on
+      # failure too — especially on failure.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: lighthouse-report
+          path: apps/web/lighthouse-report/
+          retention-days: 14
+
   # Its own job because it needs neither Node nor Postgres, and because running
   # it inside the matrix would scan the same history once per Node version.
   secrets:
@@ -192,7 +280,7 @@ jobs:
   # An aggregate keeps one stable contract with branch protection while the jobs
   # behind it change freely.
   verify:
-    needs: [test, migrations, secrets]
+    needs: [test, migrations, secrets, lighthouse]
     # `always()`, because a job whose dependency failed is *skipped*, and a
     # skipped required check is not a failed one — which would make this gate
     # pass by not running.
@@ -206,6 +294,8 @@ jobs:
           echo "test=${{ needs.test.result }}"
           echo "migrations=${{ needs.migrations.result }}"
           echo "secrets=${{ needs.secrets.result }}"
+          echo "lighthouse=${{ needs.lighthouse.result }}"
           [ "${{ needs.test.result }}" = "success" ] || exit 1
           [ "${{ needs.migrations.result }}" = "success" ] || exit 1
           [ "${{ needs.secrets.result }}" = "success" ] || exit 1
+          [ "${{ needs.lighthouse.result }}" = "success" ] || exit 1
