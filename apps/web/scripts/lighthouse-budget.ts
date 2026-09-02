@@ -28,8 +28,11 @@
  * costs a sentence saying why, which is the point.
  *
  * **What it can and cannot catch.** The ceilings sit above the observed spread,
- * so the smallest regression this refuses is roughly the gap between the two:
- * about 227 ms of Largest Contentful Paint, 279 ms of First Contentful Paint.
+ * so the smallest regression this refuses is the gap between the ceiling and
+ * the median it is compared against: 2400 − 2173 ≈ 227 ms of Largest
+ * Contentful Paint, 2200 − 1921 ≈ 279 ms of First Contentful Paint. Recompute
+ * these from a fresh baseline if a ceiling moves; a budget whose sensitivity
+ * nobody can state is one whose green nobody can interpret.
  * The F7 regression recorded in the runbook — ten Tailwind classes, 389 bytes,
  * ~160 ms of LCP — is *below* that and would pass. That is not a hole to plug
  * by tightening the numbers: 160 ms is inside the runner-to-runner spread, so a
