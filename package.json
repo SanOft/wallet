@@ -23,6 +23,7 @@
   },
   "resolutions": {
     "deepmerge-ts": "^8.0.2",
-    "workbox-build/glob": "^13.0.6"
+    "workbox-build/glob": "^13.0.6",
+    "prisma/mysql2": "^3.22.0"
   }
 }
