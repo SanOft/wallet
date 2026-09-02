@@ -270,6 +270,7 @@ wallet/
 | [`docs/runbook.md`](docs/runbook.md) | The execution plan: numbered tasks, the files each touches, acceptance criteria |
 | [`docs/smoke-plan.md`](docs/smoke-plan.md) | Checking it by hand: one person, registration through a USSD transfer, against a local API and the PWA |
 | [`docs/PARKING.md`](docs/PARKING.md) | Known gaps, triaged against the product bar |
+| [`docs/plans/next-session.md`](docs/plans/next-session.md) | Picking this up cold: how to start the terminal, what is waiting on an operator rather than on code, and the traps this project has already walked into |
 | [`docs/adr/`](docs/adr/) | Decision records — what was chosen, what it cost, what was rejected |
 
 ### Contributing
@@ -480,6 +481,7 @@ Tuzilish daraxti yuqoridagi [Repository layout](#repository-layout) bo'limida.
 | `docs/runbook.md` | Qanday tartibda va qanday tekshirib |
 | `docs/smoke-plan.md` | Qo'lda tekshirish rejasi: ro'yxatdan o'tishdan USSD o'tkazmasigacha |
 | `docs/PARKING.md` | Ma'lum kamchiliklar, mahsulot mezoni bo'yicha tartiblangan |
+| `docs/plans/next-session.md` | Noldan davom ettirish: terminalni qanday ko'tarish, nimalar koddan emas operatordan kutmoqda, va bu loyiha allaqachon tushgan tuzoqlar |
 | `docs/adr/` | Qaror yozuvlari — nima tanlandi, qancha turadi, nima rad etildi |
 | `tsconfig.base.json` | Qat'iy rejim va sakkizta qo'shimcha flag |
 
