@@ -166,13 +166,17 @@ jobs:
           DATABASE_URL: postgresql://migrator:migrator@localhost:5432/wallet_asdeployed?schema=public
         run: yarn prisma migrate deploy
 
-  # The Lighthouse budget (docs/spec.md, NFR-2.1), and the control that proves
-  # the budget can fail.
+  # The budgets in docs/spec.md NFR-2 and NFR-2.1, and the controls that prove
+  # each of them can fail.
   #
   # This job exists because four category scores were written down in
   # `docs/runbook.md` as a quality bar and nothing checked them. A written
-  # budget that nothing enforces reads as a decision while being an intention —
-  # the same failure `size-budget.ts` was written to close for the bundle.
+  # budget that nothing enforces reads as a decision while being an intention.
+  #
+  # It is still called `lighthouse` because that is the majority of its runtime
+  # and renaming it buys nothing: branch protection requires the `verify`
+  # aggregate below, not this name, which is the whole reason that aggregate
+  # exists.
   #
   # It runs on every pull request rather than only on ones touching `apps/web`.
   # A `paths` filter would skip the job on the others, and a skipped job is not
@@ -239,10 +243,19 @@ jobs:
       # evidence. This weights `dist/index.html` with a 600 ms blocking script
       # and requires the budget to refuse it. If the budget passes that, the
       # job fails here and the green below would have meant nothing.
-      - name: control — a deliberately heavy build must blow the budget
+      # The size budget runs inside `yarn build` above, so by this point it has
+      # already passed. What has not been shown is that it *can* fail, and a
+      # budget that cannot is decoration. Both halves get their own probe: one
+      # byte for the committed stylesheet baseline, which claims to need no
+      # margin, and a large block for the gzipped ceiling. No browser, about a
+      # second.
+      - name: control — the size budget must refuse a padded stylesheet
+        run: yarn workspace @wallet/web size:control
+
+      - name: control — a deliberately heavy build must blow the Lighthouse budget
         run: yarn workspace @wallet/web lighthouse:control
 
-      - name: the budget itself
+      - name: the Lighthouse budget itself
         run: yarn workspace @wallet/web lighthouse
 
       # The reports are what a red budget is diagnosed from. Uploaded on

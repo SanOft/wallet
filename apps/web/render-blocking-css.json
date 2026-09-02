@@ -1,0 +1,4 @@
+{
+  "_comment": "Raw bytes of the stylesheet the browser blocks first paint on, checked by scripts/size-budget.ts. Update it in the same commit that moves it, so the cost of a change to render-blocking CSS appears in that change's diff. Raw rather than gzipped because raw is the file on disk and is identical on every machine.",
+  "renderBlockingCssRawBytes": 14820
+}

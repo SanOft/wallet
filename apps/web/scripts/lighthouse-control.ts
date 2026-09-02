@@ -28,7 +28,7 @@ import { spawnSync } from "node:child_process"
 import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { EXIT_OVER_BUDGET } from "./lighthouse-exit-codes.ts"
+import { EXIT_OVER_BUDGET } from "./budget-exit-codes.ts"
 
 const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const INDEX = join(WEB_ROOT, "dist", "index.html")

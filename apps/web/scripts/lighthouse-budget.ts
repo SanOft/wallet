@@ -50,7 +50,7 @@ import { fileURLToPath } from "node:url"
 import { type LaunchedChrome, launch } from "chrome-launcher"
 import lighthouse, { desktopConfig } from "lighthouse"
 import { preview } from "vite"
-import { EXIT_CANNOT_MEASURE, EXIT_OVER_BUDGET } from "./lighthouse-exit-codes.ts"
+import { EXIT_CANNOT_MEASURE, EXIT_OVER_BUDGET } from "./budget-exit-codes.ts"
 
 const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const REPORT_DIR = join(WEB_ROOT, "lighthouse-report")

@@ -226,6 +226,7 @@ Every requirement is numbered and verifiable. Acceptance criteria are written in
 | Lighthouse Performance (mobile) | ≥ 90                    |
 | LCP (mobile, 4G)                | < 2.5 s                 |
 | Initial JS bundle (gzip)        | < 200 KB                |
+| Render-blocking CSS (gzip)      | < 4.5 KB                |
 
 ### NFR-2.1 The budget CI enforces
 
@@ -272,6 +273,37 @@ edge of Lighthouse's own "good" band.
 are pass/fail rather than timed, and thirty samples returned 100 with zero
 spread. There is no noise to leave room for, so leaving room would only permit
 a regression.
+
+#### The render-blocking stylesheet is held to its exact size
+
+A ceiling only catches a regression bigger than its own slack, and the
+stylesheet regression this project actually had was far smaller than any useful
+slack. Tailwind emits one stylesheet for the whole application, so a route
+behind `lazy()` can still put its utilities in the CSS the login screen blocks
+on — F7 did exactly that and cost a Lighthouse point. Rebuilt against its true
+parent with today's toolchain, F7's source adds **60 raw bytes**. Nothing with
+a margin sees 60 bytes.
+
+Nothing needs a margin, because the stylesheet is deterministic: same source,
+same bytes. So its size is committed to `apps/web/render-blocking-css.json`,
+and any change to it is a change to a tracked file — the 60 bytes appear in the
+diff next to the route that added them, which is the conversation to have. A
+snapshot, not a threshold.
+
+The snapshot is on **raw** bytes; the ceiling is on gzipped. Raw is the file on
+disk and identical on every machine, while gzipped size depends on the zlib the
+build ran against, and CI builds on both Node 22 and Node 24.
+
+Measured growth, for whoever has to move the ceiling: rebuilding every commit
+that touched `apps/web/src` puts the stylesheet at 13834 → 14820 raw and
+3803 → 4078 gzipped across the whole feature build-out, F3 through F7 and the
+fixes after them. Per-feature deltas ran 10 to 83 gzipped bytes. The 4.5 KB
+ceiling leaves about 530 bytes above today's 4078 — roughly twice everything
+the application has spent so far.
+
+**Raising either number is a decision to record here, not to edit into the
+script.** Updating the snapshot is not: that is the mechanism working, and the
+commit that moves it is where the reason belongs.
 
 **Mobile Performance is not held at 98, and never was.** The runbook reported
 98 as a fixed value from a single run on a developer laptop. Measured properly
