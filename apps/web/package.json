@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build && yarn size",
     "size": "tsx scripts/size-budget.ts",
+    "size:control": "tsx scripts/size-control.ts",
     "lighthouse": "tsx scripts/lighthouse-budget.ts",
     "lighthouse:control": "tsx scripts/lighthouse-control.ts",
     "icons": "tsx scripts/make-icons.ts",
