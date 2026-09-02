@@ -8,7 +8,7 @@ import { fetchCbuRates } from "./infra/cbu.js"
 import { warmDummyHash } from "./infra/crypto.js"
 import { createTokenService } from "./infra/jwt.js"
 import { createLogger } from "./infra/logger.js"
-import { createPrismaClient } from "./infra/prisma.js"
+import { checkPrivileges, createPrismaClient } from "./infra/prisma.js"
 import { RatesRepository } from "./infra/RatesRepository.js"
 
 /**
@@ -34,6 +34,30 @@ async function main(): Promise<void> {
     log.fatal({ err: reason }, "unhandled rejection; exiting")
     process.exit(1)
   })
+
+  /*
+   * Says out loud how much this deployment could lose if the process were
+   * taken over (P-4).
+   *
+   * `warn` rather than `info` when the role is over-privileged, because the
+   * gap is real and silent: everything works exactly the same either way, so
+   * nothing else would ever mention it. `runtime-role.sql` is the fix and the
+   * runbook's T-6.1 section says how to apply it.
+   */
+  const privileges = await checkPrivileges(prisma)
+  if (privileges === null) {
+    log.warn({ event: "db.privileges_unknown" }, "could not read the connecting role's privileges")
+  } else if (privileges.superuser || privileges.ownedTables > 0) {
+    log.warn(
+      { event: "db.over_privileged", ...privileges },
+      "the API owns the tables it writes to; a compromised process could rewrite the ledger's rules (P-4)",
+    )
+  } else {
+    log.info(
+      { event: "db.least_privilege", ...privileges },
+      "connected as a role that owns nothing",
+    )
+  }
 
   // Pay the first argon2 cost at startup rather than on the first login for
   // an unknown number, which would otherwise answer measurably slower.
