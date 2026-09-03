@@ -28,14 +28,18 @@ describe.skipIf(!hasDatabase)("GET /health (runbook T-2.5)", () => {
     return buildApp(client, { ...process.env, LOG_LEVEL: "fatal" }).app
   }
 
-  it("returns 200 with the documented shape and the applied migration", async () => {
+  it("returns 200 with the documented shape against a real database", async () => {
     const res = await request(app(prisma)).get("/health")
 
     expect(res.status).toBe(200)
     expect(res.body).toEqual({
       status: "ok",
       db: "up",
-      migration: expect.stringMatching(/^\d{14}_/),
+      // No `migration`: the probe still queries `_prisma_migrations` — that is
+      // how it knows the database answers — but the name it reads goes to the
+      // boot log, not to an unauthenticated caller. `health.test.ts` holds that
+      // line; `toEqual` here means a field added back cannot pass unnoticed.
+      //
       // The commit the process was built from. The release workflow polls this
       // to tell the old instance from the new one, which is what lets it wait
       // for a deploy without a Render API token.
@@ -75,7 +79,6 @@ describe.skipIf(!hasDatabase)("GET /health (runbook T-2.5)", () => {
       expect(res.body).toEqual({
         status: "degraded",
         db: "down",
-        migration: null,
         // Reported even when the database is down: the release gate has to be
         // able to tell "the new build is up but unhealthy" from "the old build
         // is still answering", and those need different responses.
