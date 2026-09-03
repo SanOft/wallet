@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
 import { AuthService } from "../src/domain/AuthService.js"
 import { TransferService } from "../src/domain/TransferService.js"
+import { pinSubject } from "../src/infra/crypto.js"
 import { createTokenService } from "../src/infra/jwt.js"
 import { createPrismaClient } from "../src/infra/prisma.js"
 import { buildApp, testEnv, uniquePhone } from "./helpers.js"
@@ -161,6 +162,59 @@ describe.skipIf(!hasDatabase)("the PIN (FR-1.6, FR-9.5)", () => {
      */
     const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } })
     expect(row.pinLockedUntil).toBeNull()
+  })
+
+  it("blocks a burst of wrong PINs that arrives together, not just one at a time", async () => {
+    /*
+     * FR-9.5 counted three failures by reading the lock, verifying, writing the
+     * attempt and then counting — four statements with nothing holding the user
+     * still between them. Twenty dials that arrive together all read an unlocked
+     * account, all write a failure and all answer "PIN noto'g'ri", so the
+     * channel that has only a four-digit secret in front of it gives away twenty
+     * guesses for the price of three.
+     *
+     * Through the simulator rather than the service, because that is the path a
+     * dialler has: one HTTP request per keypress, and nothing stopping twenty of
+     * them being in flight at once.
+     */
+    const user = await newUser()
+    await setPin(user, "1234")
+
+    const dial = () =>
+      request(user.app)
+        .post("/api/channels/ussd/simulate")
+        .set("authorization", `Bearer ${user.token}`)
+        .send({
+          sessionId: randomUUID(),
+          phoneNumber: "ignored",
+          networkCode: "62120",
+          serviceCode: "*880#",
+          text: "1*9999",
+        })
+
+    const replies = (await Promise.all(Array.from({ length: 20 }, dial))).map((res) => res.text)
+
+    const failures = await prisma.authAttempt.count({
+      where: {
+        subject: pinSubject(user.id, testEnv({ ...process.env }).JWT_SECRET),
+        succeeded: false,
+      },
+    })
+    expect(failures, "one row per PIN that was actually verified").toBe(3)
+
+    /*
+     * Two, not three. The third failure is the one that writes the lock, and it
+     * refuses with `PIN_LOCKED` in the same breath — the sequential behaviour
+     * `ussd.test.ts` already pins. Serialising must not change it.
+     */
+    expect(replies.filter((text) => text === "END PIN noto'g'ri.")).toHaveLength(2)
+    expect(replies.filter((text) => text.includes("PIN bloklandi"))).toHaveLength(18)
+
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } })
+    // An hour from the third failure, not from the twentieth: an attempt made
+    // while the block is up is refused before it can extend it.
+    expect((row.pinLockedUntil?.getTime() ?? 0) - Date.now()).toBeGreaterThan(55 * 60 * 1000)
+    expect((row.pinLockedUntil?.getTime() ?? 0) - Date.now()).toBeLessThanOrEqual(60 * 60 * 1000)
   })
 
   it("counts PIN failures separately from login failures", async () => {
