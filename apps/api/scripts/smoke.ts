@@ -17,6 +17,8 @@
  * hidden — see P-26.
  */
 
+import { randomBytes } from "node:crypto"
+
 const BASE = (process.env.SMOKE_BASE_URL ?? "").replace(/\/+$/, "")
 const EXPECTED_VERSION = process.env.SMOKE_EXPECTED_VERSION ?? ""
 
@@ -44,8 +46,9 @@ function smokePhone(): string {
   return `+99833${suffix}`
 }
 
+/** Math.random is not a CSPRNG; a guessable password on a real endpoint is a real credential. */
 function password(): string {
-  return `smoke-${Math.random().toString(36).slice(2)}-${Date.now()}`
+  return randomBytes(24).toString("base64url")
 }
 
 interface Result {

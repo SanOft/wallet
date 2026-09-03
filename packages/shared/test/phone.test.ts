@@ -3,6 +3,7 @@ import {
   createRegionalPhoneSchema,
   DEFAULT_REGION,
   formatPhone,
+  isSmokePhone,
   normalizePhone,
   REGIONS,
   SUPPORTED_REGIONS,
@@ -95,6 +96,20 @@ describe("createRegionalPhoneSchema", () => {
 
   it("rejects a wrong national length", () => {
     expect(schema().safeParse("+99890123456").success).toBe(false)
+  })
+})
+
+describe("isSmokePhone (P-26)", () => {
+  it("recognises the unassigned +998 33 range the smoke test issues", () => {
+    expect(isSmokePhone("+998331234567")).toBe(true)
+  })
+
+  it("rejects a real UZ number outside the range", () => {
+    expect(isSmokePhone("+998901234567")).toBe(false)
+  })
+
+  it("rejects a number that merely contains the prefix mid-string", () => {
+    expect(isSmokePhone("+1299833123456")).toBe(false)
   })
 })
 

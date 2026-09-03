@@ -66,6 +66,17 @@ export function normalizePhone(raw: string, region: SupportedRegion = DEFAULT_RE
   return raw
 }
 
+/** The unassigned +998 33 range production smoke accounts (T-6.3) are issued from (P-26). */
+const SMOKE_PHONE_PREFIX = "+99833"
+
+/**
+ * True for a phone in the smoke range, so a future metric can exclude it by
+ * code rather than by the reader remembering P-26's rule.
+ */
+export function isSmokePhone(phone: string): boolean {
+  return phone.startsWith(SMOKE_PHONE_PREFIX)
+}
+
 export function formatPhone(e164: string, region: SupportedRegion = DEFAULT_REGION): string {
   const { callingCode, displayGroups } = REGIONS[region]
   if (!e164.startsWith(`+${callingCode}`)) return e164
