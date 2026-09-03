@@ -70,8 +70,14 @@ function condition(file: string, name: string): string {
   const start = lines.findIndex((line) => /^ {4}if:/.test(line))
   expect(start, `${file}: job ${name} has no if:`).toBeGreaterThanOrEqual(0)
 
+  /*
+   * The folded block ends at the next key *or comment* at the job's own
+   * indentation. Stopping only at a key would fold the comments that follow
+   * into the value, and then a comment naming a clause would satisfy the
+   * assertions below without the clause existing.
+   */
   const rest = lines.slice(start + 1)
-  const end = rest.findIndex((line) => /^ {4}[\w-]+:/.test(line))
+  const end = rest.findIndex((line) => /^ {4}(#|[\w-]+:)/.test(line))
   return [lines[start], ...(end === -1 ? rest : rest.slice(0, end))]
     .join(" ")
     .replace(/\s+/g, " ")
