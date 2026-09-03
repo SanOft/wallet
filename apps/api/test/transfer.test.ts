@@ -533,7 +533,11 @@ describe.skipIf(!hasDatabase)("money transfer (FR-4)", () => {
         await ledger.balanceOf(holder.accountId),
       )
     }
-  }, 180_000)
+    // Fifty registrations and fifty pinned races measure 13 seconds here and
+    // share a machine with the web suite in CI. The budget is the run, not the
+    // symptom: a wedged lock wait still fails in ten seconds, with its own
+    // message rather than this one.
+  }, 90_000)
 
   it("F8: a top-up retries the deferred trigger's abort instead of reporting INTERNAL", async () => {
     /*
