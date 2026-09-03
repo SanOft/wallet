@@ -19,6 +19,7 @@ import { recipientRouter } from "./routes/recipients.js"
 import { transferRouter } from "./routes/transfers.js"
 import { ussdRouter } from "./routes/ussd.js"
 import {
+  authenticGateway,
   corsPolicy,
   globalRateLimit,
   loginRateLimit,
@@ -134,10 +135,16 @@ export function createApp({
   // After the body limit would be too late for a flood of small requests, and
   // before the routers so a throttled caller costs nothing but the counter.
   /*
-   * Everywhere except the gateway callback, which is metered per subscriber
-   * instead (P-33). Leaving it here as well would put the address budget back
-   * in front: a gateway is one address for a whole network, and the first
-   * limiter to refuse is the one that decides what the subscriber sees.
+   * Everywhere except a gateway callback that has *proven* it is one, which is
+   * metered per subscriber instead (P-33). Leaving the address budget in front
+   * of a real gateway would put it back in charge: a gateway is one address for
+   * a whole network, and the first limiter to refuse is the one that decides
+   * what the subscriber sees.
+   *
+   * The exemption is the secret, not the path. Exempting the path itself gave
+   * anybody who could spell it an unmetered route — and since an unset secret
+   * is the expected production state (FR-9.6), the exemption was widest exactly
+   * where nothing else stood in front of it.
    */
   /*
    * Built once, outside the handler.
@@ -152,7 +159,13 @@ export function createApp({
   const globalLimit = globalRateLimit()
 
   app.use((req, res, next) => {
-    if (req.path === USSD_GATEWAY_PATH) {
+    // Compared here and again on the route. The comparison is constant-time and
+    // costs a header read, and one authority for "is this the gateway" is worth
+    // more than the microsecond a stashed answer would save.
+    const provenGateway =
+      req.path === USSD_GATEWAY_PATH &&
+      authenticGateway(req.get("x-gateway-secret"), env.USSD_GATEWAY_SECRET)
+    if (provenGateway) {
       next()
       return
     }
