@@ -34,6 +34,11 @@ function refusalMessage(code: string | undefined): string {
       return "Parol noto'g'ri."
     case "STEP_UP_REQUIRED":
       return "Bu summa uchun parolni kiriting."
+    // The step-up shares the sign-in's backoff, so a few wrong passwords here
+    // lock this screen and the login alike. Saying "wait" rather than "wrong"
+    // is what stops somebody typing the same password four more times.
+    case "AUTH_LOCKED":
+      return "Juda ko'p urinish. Birozdan so'ng qayta urinib ko'ring."
     case "RECIPIENT_NOT_FOUND":
       return "Qabul qiluvchi topilmadi."
     case "SELF_TRANSFER_FORBIDDEN":

@@ -105,7 +105,9 @@ async function main(): Promise<void> {
 
   const transfers = new TransferService({
     prisma,
-    pepper: env.JWT_SECRET,
+    // FR-2.8's confirmation is the account password, so `AuthService` verifies
+    // it and it waits behind the same backoff a sign-in does.
+    confirmPassword: (userId, password) => auth.confirmPassword(userId, password),
     warn: (event, cause) => log.warn({ event, err: cause }, "transfer degraded"),
   })
   const rates = new RatesService({

@@ -688,7 +688,7 @@ describe.skipIf(!hasDatabase)("anti-fraud limits (FR-6)", () => {
       .send({ phone: recipientPhone, firstName: "C", lastName: "D", password: PASSWORD })
 
     const sender = await prisma.user.findUniqueOrThrow({ where: { phone: senderPhone } })
-    const transfers = new TransferService({ prisma, pepper: "test-pepper" })
+    const transfers = new TransferService({ prisma })
 
     // 600 000 UZS: fine on the web, above the USSD per-operation cap.
     await expect(
@@ -806,7 +806,7 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
     // exactly the cap went straight through.
     const sender = await holder(300_000_000n)
     const stranger = await holder(0n)
-    const transfers = new TransferService({ prisma, pepper: "test-pepper" })
+    const transfers = new TransferService({ prisma })
 
     // 400 000 UZS: under the cap, accepted.
     await transfers.execute({
@@ -834,7 +834,7 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
 
   it("FR-6.3: more than five transfers in five minutes blocks", async () => {
     const sender = await holder(10_000_000n)
-    const transfers = new TransferService({ prisma, pepper: "test-pepper" })
+    const transfers = new TransferService({ prisma })
     const recipients = []
     for (let i = 0; i < 6; i++) recipients.push(await holder(0n))
 
@@ -866,10 +866,21 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
    */
   const stepUp = { password: PASSWORD }
 
+  /**
+   * The confirmation port, stubbed rather than wired to `AuthService`.
+   *
+   * `pin-and-stepup.test.ts` owns the real one — that it verifies the account
+   * password and waits behind FR-2.3's backoff. Here the confirmation only has
+   * to stop being the reason a transfer was refused, and a stub says so without
+   * dragging a second service into a test about FR-6.
+   */
+  const confirmPassword = (_userId: string, password: string) =>
+    password === PASSWORD ? Promise.resolve() : Promise.reject(new Error("wrong password"))
+
   it("FR-6.1: the daily total is capped per channel", async () => {
     const sender = await holder(3_500_000_000n)
     const recipient = await holder(0n)
-    const transfers = new TransferService({ prisma, pepper: "test-pepper" })
+    const transfers = new TransferService({ prisma, confirmPassword })
 
     // An established relationship, so FR-6.2 does not fire before FR-6.1: one
     // small transfer, back-dated past the 24-hour new-recipient window.
@@ -932,7 +943,7 @@ describe.skipIf(!hasDatabase)("FR-6 limits, each with its own test", () => {
     // deserves a client error.
     const sender = await holder(10_000_000n)
     const recipient = await holder(0n)
-    const transfers = new TransferService({ prisma, pepper: "test-pepper" })
+    const transfers = new TransferService({ prisma })
     const key = randomUUID()
 
     await transfers.execute({

@@ -130,7 +130,8 @@ export async function seedDemoUsers(
      */
     const pepper = process.env.JWT_SECRET ?? "local-demo-pepper-only-000000000000000000"
     const auth = new AuthService({ prisma, tokens: NO_TOKENS, pepper })
-    const transfers = new TransferService({ prisma, pepper })
+    // No `confirmPassword`: this script only tops up, which never asks for one.
+    const transfers = new TransferService({ prisma })
 
     const results: DemoSeedResult[] = []
 

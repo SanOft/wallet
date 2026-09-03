@@ -24,6 +24,7 @@ import {
   globalRateLimit,
   loginRateLimit,
   noStore,
+  passwordConfirmRateLimit,
   registerRateLimit,
   securityHeaders,
   terminatePreflight,
@@ -188,6 +189,22 @@ export function createApp({
   app.use(terminatePreflight())
 
   app.use(express.json({ limit: "16kb" }))
+
+  /*
+   * The two endpoints that ask for the account password again (FR-2.8, FR-1.6),
+   * metered together.
+   *
+   * After `express.json`, because the limiter reads the body to tell a
+   * confirmation from an ordinary request — a transfer without a password must
+   * not spend a budget sized for guessing one.
+   *
+   * One instance across both mounts, so the budget is "password confirmations
+   * from this address" rather than fifty per endpoint; and built once, for the
+   * reason `globalLimit` above is.
+   */
+  const passwordConfirmLimit = passwordConfirmRateLimit()
+  app.post("/api/transfers", passwordConfirmLimit)
+  app.put("/api/me/pin", passwordConfirmLimit)
 
   app.use(healthRouter(prisma, env.TRUST_PROXY_HOPS))
   app.use(authRouter({ auth, tokens, env, prisma }))
