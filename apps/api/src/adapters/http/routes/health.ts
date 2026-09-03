@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client"
 import { Router } from "express"
 import * as z from "zod"
-import { checkDatabase } from "../../../infra/prisma.js"
+import { checkDatabase, type DatabaseHealth } from "../../../infra/prisma.js"
 import { respond } from "../respond.js"
 
 /**
@@ -12,7 +12,6 @@ import { respond } from "../respond.js"
 const healthSchema = z.strictObject({
   status: z.enum(["ok", "degraded"]),
   db: z.enum(["up", "down"]),
-  migration: z.string().nullable(),
   version: z.string(),
   /**
    * How many `X-Forwarded-For` entries this request arrived with (P-11).
@@ -59,12 +58,15 @@ const VERSION = process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? "unkn
  *
  * A health endpoint that returns 200 whenever the process is running is worse
  * than none: it tells the load balancer to keep sending traffic to an instance
- * that cannot serve it. This one reports 503 when the database is unreachable,
- * and says which migration the database is actually on, because during a deploy
- * window the API and the schema are briefly out of step (§19.1).
+ * that cannot serve it. This one reports 503 when the database is unreachable.
  *
  * Unauthenticated by design (§12.1), so it deliberately exposes nothing beyond
- * reachability — no connection string, no driver message, no row counts.
+ * reachability — no connection string, no driver message, no row counts, and
+ * not the migration the database is on. That name is a version number for the
+ * schema: it says which published migration this deployment is running and so
+ * which of its known gaps are still open, to a caller who had to prove nothing
+ * to ask. The deploy window it was there for (§19.1) is read by an operator,
+ * who has the boot log — `index.ts` writes it there instead.
  */
 /**
  * The number of hops the header claims. Split on commas rather than trusting
@@ -75,18 +77,57 @@ function observedChainDepth(header: string | undefined): number {
   return header.split(",").filter((part) => part.trim().length > 0).length
 }
 
+/**
+ * How long one probe answers for.
+ *
+ * Short next to the interval anything real polls this at — the deploy smoke
+ * waits ten seconds between attempts (`scripts/smoke.ts`) — so a database that
+ * went away is still reported within one check, while the query cost of a burst
+ * stops scaling with the burst. A failed probe is held for the same window,
+ * deliberately: a database that is refusing connections is exactly when a query
+ * per call is most expensive, and the price is that a recovery is announced up
+ * to five seconds late.
+ */
+const PROBE_TTL_MS = 5_000
+
 export function healthRouter(prisma: PrismaClient, trustedHops: number): Router {
   const router = Router()
 
+  /*
+   * The last probe, kept for `PROBE_TTL_MS`. This route takes no credential
+   * (§12.1), so the work one call does is work anyone may ask for: without
+   * this, a burst of `/health` calls is a burst of queries against the pool the
+   * paying traffic needs, and an unauthenticated caller picks how much database
+   * load the API takes.
+   *
+   * The *promise* is memoised, not the settled value, so calls that arrive
+   * while a probe is in flight join it rather than each starting one; a burst
+   * is concurrent, which is the case a value-only memo misses entirely.
+   * `checkDatabase` catches its own errors and never rejects, so there is no
+   * rejected promise to be shared here.
+   *
+   * Per router, not per module: one process builds one app, and a test that
+   * stands up a second app against another client must not be answered from
+   * the first one's result.
+   */
+  let probe: { readonly at: number; readonly health: Promise<DatabaseHealth> } | null = null
+
+  function probeDatabase(): Promise<DatabaseHealth> {
+    const now = Date.now()
+    if (probe && now - probe.at < PROBE_TTL_MS) return probe.health
+
+    probe = { at: now, health: checkDatabase(prisma) }
+    return probe.health
+  }
+
   router.get("/health", async (req, res) => {
-    const db = await checkDatabase(prisma)
+    const db = await probeDatabase()
     const proxyChain = observedChainDepth(req.get("x-forwarded-for"))
 
     if (!db.ok) {
       respond(res, 503, healthSchema, {
         status: "degraded",
         db: "down",
-        migration: null,
         version: VERSION,
         proxyChain,
         trustedHops,
@@ -97,7 +138,6 @@ export function healthRouter(prisma: PrismaClient, trustedHops: number): Router 
     respond(res, 200, healthSchema, {
       status: "ok",
       db: "up",
-      migration: db.migration,
       version: VERSION,
       proxyChain,
       trustedHops,

@@ -98,6 +98,21 @@ export async function seedDemoUsers(
   const url = process.env.DATABASE_URL
   if (!url) throw new Error("DATABASE_URL is required to seed")
 
+  /*
+   * NODE_ENV alone is not a boundary: a shell with NODE_ENV unset, pointed at
+   * a real database, still passes it. The database's own host decides
+   * instead, so a Neon or RDS URL sitting in the environment is refused
+   * regardless of NODE_ENV. SEED_DEMO_ALLOW_REMOTE is the one deliberate
+   * escape hatch, for seeding a disposable remote database by hand.
+   */
+  const hostname = new URL(url).hostname.replace(/^\[|\]$/g, "")
+  const isLocal = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
+  if (!isLocal && process.env.SEED_DEMO_ALLOW_REMOTE !== "1") {
+    throw new Error(
+      "seed-demo only runs against a local database; set SEED_DEMO_ALLOW_REMOTE=1 to override",
+    )
+  }
+
   const prisma = injected ?? createPrismaClient({ DATABASE_URL: url })
 
   try {
