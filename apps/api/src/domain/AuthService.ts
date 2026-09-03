@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import type { PrismaClient } from "@prisma/client"
+import type { Prisma, PrismaClient } from "@prisma/client"
 import type { AuthResponse, LoginRequest, PublicUser, RegisterRequest } from "@wallet/shared"
 import {
   attemptSubject,
@@ -147,15 +147,18 @@ export class AuthService {
    * as *consecutive* failures since the last success, so signing in clears the
    * penalty — a window-based count would keep punishing someone who has
    * already proved who they are.
+   *
+   * Reads through the client it is given rather than `#prisma`, so the count
+   * and the write that follows it happen inside one `#serialised` transaction.
    */
-  async #backoffSeconds(subject: string): Promise<number> {
-    const lastSuccess = await this.#prisma.authAttempt.findFirst({
+  async #backoffSeconds(subject: string, db: Prisma.TransactionClient): Promise<number> {
+    const lastSuccess = await db.authAttempt.findFirst({
       where: { subject, succeeded: true },
       orderBy: { createdAt: "desc" },
       select: { createdAt: true },
     })
 
-    const failures = await this.#prisma.authAttempt.findMany({
+    const failures = await db.authAttempt.findMany({
       where: {
         subject,
         succeeded: false,
@@ -327,59 +330,116 @@ export class AuthService {
   }
 
   /**
+   * Runs `work` with every other caller for the same subject waiting behind it.
+   *
+   * FR-2.3's backoff and FR-9.5's PIN block are both read-check-write: count
+   * the failures, verify the secret, record the attempt. With nothing between
+   * those statements the count is stale by the time it is acted on, so twenty
+   * requests that arrive together each read the pre-burst state and each get a
+   * free guess. That turns a rule about how fast one caller may guess into no
+   * rule at all for a caller who opens twenty connections — which is the only
+   * way passwords and four-digit PINs are guessed at scale.
+   *
+   * The lock is the same mechanism ADR-0006 uses for the treasury: transaction
+   * scoped, so PostgreSQL releases it at COMMIT or ROLLBACK and a crashed
+   * request cannot strand it. `hashtext` maps the key onto the advisory space's
+   * 32 bits, so two unrelated subjects may collide; the cost of a collision is
+   * that two callers queue who did not have to, never that one skips the queue.
+   *
+   * Read Committed for the reason the top-up path gives: the lock is the
+   * exclusion, and a Serializable snapshot is taken before the lock is granted,
+   * so every queued caller would wake holding a view of the world from before
+   * its predecessors committed — stale exactly where it matters.
+   *
+   * The budget is Prisma's default work time doubled and the wait raised. One
+   * attempt holds the lock for about 40 ms of argon2, so a burst of twenty
+   * queues for under a second; the numbers leave room for a slow host to queue
+   * rather than fail. Anything that exceeds them is a stuck lock, and failing
+   * is the right answer to that.
+   */
+  async #serialised<T>(
+    lockKey: string,
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    return this.#prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`
+        return work(tx)
+      },
+      { isolationLevel: "ReadCommitted", maxWait: 5_000, timeout: 10_000 },
+    )
+  }
+
+  /**
    * FR-2.1, FR-2.2, S-5.
    *
    * The work done is identical whether or not the number exists: when it does
    * not, the password is verified against a throwaway digest so the response
    * time carries no information. Returning early here is the natural way to
    * write this and it is exactly the leak S-5 tests for.
+   *
+   * The whole check is `#serialised` on the number, so a burst of requests for
+   * one number is counted as if it had arrived one attempt at a time. The
+   * refusals are returned rather than thrown from inside the transaction:
+   * throwing rolls the transaction back, and the attempt row this just wrote is
+   * the thing the next request counts.
    */
   async login(input: LoginRequest): Promise<Session> {
     const subject = attemptSubject(input.phone, this.#pepper)
 
-    /*
-     * Checked before the password, and before the user is even looked up.
-     *
-     * Verifying first would spend an argon2 hash on every request an attacker
-     * sends, which turns the defence into the denial of service it exists to
-     * prevent. Refusing early also keeps the locked response identical for
-     * registered and unregistered numbers — both are fast, both say the same
-     * thing.
-     */
-    const waitFor = await this.#backoffSeconds(subject)
-    if (waitFor > 0) throw new AccountLockedError(waitFor)
+    const outcome = await this.#serialised(`auth:${subject}`, async (tx) => {
+      /*
+       * Checked before the password, and before the user is even looked up.
+       *
+       * Verifying first would spend an argon2 hash on every request an attacker
+       * sends, which turns the defence into the denial of service it exists to
+       * prevent. Refusing early also keeps the locked response identical for
+       * registered and unregistered numbers — both are fast, both say the same
+       * thing.
+       */
+      const waitFor = await this.#backoffSeconds(subject, tx)
+      if (waitFor > 0) return { kind: "locked" as const, waitFor }
 
-    const user = await this.#prisma.user.findUnique({
-      where: { phone: input.phone },
-      select: {
-        id: true,
-        phone: true,
-        firstName: true,
-        lastName: true,
-        passwordHash: true,
-        pinHash: true,
-      },
+      const user = await tx.user.findUnique({
+        where: { phone: input.phone },
+        select: {
+          id: true,
+          phone: true,
+          firstName: true,
+          lastName: true,
+          passwordHash: true,
+          pinHash: true,
+        },
+      })
+
+      const hash = user?.passwordHash ?? (await dummyHash())
+      const passwordMatches = await verifySecret(hash, input.password)
+
+      // Written unconditionally, with a null subject when the number is unknown
+      // (§11.2 draws it that way). Recording only the attempts that match a user
+      // made a registered number cost one extra INSERT, which was measurable from
+      // outside as ~6ms and classified numbers at 80% accuracy.
+      await tx.authAttempt.create({
+        data: {
+          userId: user?.id ?? null,
+          subject,
+          succeeded: Boolean(user) && passwordMatches,
+        },
+      })
+
+      if (!user || !passwordMatches) return { kind: "invalid" as const }
+      return { kind: "ok" as const, user }
     })
 
-    const hash = user?.passwordHash ?? (await dummyHash())
-    const passwordMatches = await verifySecret(hash, input.password)
+    if (outcome.kind === "locked") throw new AccountLockedError(outcome.waitFor)
+    if (outcome.kind === "invalid") throw new InvalidCredentialsError()
 
-    // Written unconditionally, with a null subject when the number is unknown
-    // (§11.2 draws it that way). Recording only the attempts that match a user
-    // made a registered number cost one extra INSERT, which was measurable from
-    // outside as ~6ms and classified numbers at 80% accuracy.
-    await this.#prisma.authAttempt.create({
-      data: {
-        userId: user?.id ?? null,
-        subject,
-        succeeded: Boolean(user) && passwordMatches,
-      },
-    })
-
-    if (!user || !passwordMatches) throw new InvalidCredentialsError()
-
+    // Outside the lock: issuing a session writes a refresh token and touches
+    // nothing the backoff counts, so holding the queue open for it would make
+    // every failed attempt wait on a successful one's work.
+    //
     // A fresh family: this is a new device as far as we can tell (§9.2).
-    return this.#issueSession(user, randomUUID())
+    return this.#issueSession(outcome.user, randomUUID())
   }
 
   /**
@@ -516,56 +576,77 @@ export class AuthService {
    * Consumed by the USSD adapter (B6). Written here because it is the same
    * credential the web sets, and two implementations of one rule is how the
    * two channels come to disagree about who is blocked.
+   *
+   * Read, verify, write and count are `#serialised` on the user, so twenty
+   * dials that arrive together spend three attempts rather than twenty. The
+   * refusals are returned rather than thrown from inside the transaction: a
+   * throw rolls back the attempt row and the block that was just written, which
+   * would leave the third wrong PIN refusing the caller and forgetting the
+   * refusal.
    */
   async verifyPin(userId: string, pin: string): Promise<void> {
-    const user = await this.#prisma.user.findUnique({
-      where: { id: userId },
-      select: { pinHash: true, pinLockedUntil: true },
-    })
-
-    if (!user) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
-    if (!user.pinHash) throw new DomainError("PIN_NOT_SET", "No PIN has been set")
-
-    const now = this.#now()
-    if (user.pinLockedUntil && user.pinLockedUntil > now) {
-      throw new DomainError("PIN_LOCKED", "PIN is locked")
-    }
-
-    if (await verifySecret(user.pinHash, pin)) {
-      // A correct PIN clears the count, so three wrong attempts spread over a
-      // month never add up to a block.
-      await this.#prisma.authAttempt.create({
-        data: { userId, subject: pinSubject(userId, this.#pepper), succeeded: true },
-      })
-      return
-    }
-
-    await this.#prisma.authAttempt.create({
-      data: { userId, subject: pinSubject(userId, this.#pepper), succeeded: false },
-    })
-
-    const failures = await this.#consecutivePinFailures(userId)
-    if (failures >= PIN_ATTEMPTS_BEFORE_LOCK) {
-      await this.#prisma.user.update({
+    const outcome = await this.#serialised(`pin:${userId}`, async (tx) => {
+      const user = await tx.user.findUnique({
         where: { id: userId },
-        data: { pinLockedUntil: new Date(now.getTime() + PIN_LOCK_MS) },
+        select: { pinHash: true, pinLockedUntil: true },
       })
-      throw new DomainError("PIN_LOCKED", "PIN is locked")
-    }
 
-    throw new DomainError("AUTH_INVALID_CREDENTIALS", "PIN is not correct")
+      if (!user) return { kind: "no-user" as const }
+      if (!user.pinHash) return { kind: "no-pin" as const }
+
+      const now = this.#now()
+      if (user.pinLockedUntil && user.pinLockedUntil > now) return { kind: "locked" as const }
+
+      if (await verifySecret(user.pinHash, pin)) {
+        // A correct PIN clears the count, so three wrong attempts spread over a
+        // month never add up to a block.
+        await tx.authAttempt.create({
+          data: { userId, subject: pinSubject(userId, this.#pepper), succeeded: true },
+        })
+        return { kind: "ok" as const }
+      }
+
+      await tx.authAttempt.create({
+        data: { userId, subject: pinSubject(userId, this.#pepper), succeeded: false },
+      })
+
+      const failures = await this.#consecutivePinFailures(userId, tx)
+      if (failures >= PIN_ATTEMPTS_BEFORE_LOCK) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { pinLockedUntil: new Date(now.getTime() + PIN_LOCK_MS) },
+        })
+        return { kind: "locked" as const }
+      }
+
+      return { kind: "wrong" as const }
+    })
+
+    switch (outcome.kind) {
+      case "no-user":
+        throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
+      case "no-pin":
+        throw new DomainError("PIN_NOT_SET", "No PIN has been set")
+      case "locked":
+        throw new DomainError("PIN_LOCKED", "PIN is locked")
+      case "wrong":
+        throw new DomainError("AUTH_INVALID_CREDENTIALS", "PIN is not correct")
+      case "ok":
+        return
+    }
   }
 
-  async #consecutivePinFailures(userId: string): Promise<number> {
+  /** Reads through the caller's client, so `verifyPin` counts what it just wrote. */
+  async #consecutivePinFailures(userId: string, db: Prisma.TransactionClient): Promise<number> {
     const subject = pinSubject(userId, this.#pepper)
 
-    const lastSuccess = await this.#prisma.authAttempt.findFirst({
+    const lastSuccess = await db.authAttempt.findFirst({
       where: { subject, succeeded: true },
       orderBy: { createdAt: "desc" },
       select: { createdAt: true },
     })
 
-    return this.#prisma.authAttempt.count({
+    return db.authAttempt.count({
       where: {
         subject,
         succeeded: false,

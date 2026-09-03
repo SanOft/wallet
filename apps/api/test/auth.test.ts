@@ -809,6 +809,46 @@ describe.skipIf(!hasDatabase)("FR-2.3 — per-account backoff", () => {
     expect(after).toEqual([401, 401, 401])
   })
 
+  it("counts a burst that arrives together exactly as it counts one at a time", async () => {
+    /*
+     * The interleaving the sequential tests above cannot produce.
+     *
+     * Read the delay, verify the password, write the attempt: three statements
+     * with no exclusion between them, so twenty requests that arrive together
+     * all read the pre-burst count of zero, all find themselves inside the
+     * three free attempts, and all answer 401. The backoff is then a limit on
+     * how fast one caller can guess *sequentially* and no limit at all on a
+     * caller who opens twenty connections — which is the only way anybody
+     * guesses passwords at scale.
+     *
+     * Serialised per number, the burst has to produce the same three rows and
+     * the same three refusals as three requests sent one after another.
+     */
+    const instance = app()
+    const phone = uniquePhone()
+
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => attempt(instance, phone, "definitely-not-the-password")),
+    )
+
+    const rows = await prisma.authAttempt.findMany({
+      where: { subject: attemptSubject(phone, PEPPER()), succeeded: false },
+    })
+    expect(rows, "one row per attempt that was actually verified").toHaveLength(3)
+
+    const refused = results.filter((res) => res.status === 401)
+    const locked = results.filter((res) => res.status === 429)
+    // Three free attempts (FR-2.3), so seventeen of the twenty are refused for
+    // being too soon rather than for being wrong.
+    expect(refused).toHaveLength(3)
+    expect(locked).toHaveLength(17)
+
+    // Locked, not merely throttled: a 429 from the address limiter would say
+    // RATE_LIMITED and carry no wait, and this test would pass on it.
+    expect(locked.every((res) => res.body.error.code === "AUTH_LOCKED")).toBe(true)
+    expect(locked.every((res) => Number(res.headers["retry-after"]) > 0)).toBe(true)
+  })
+
   it("backs off an unregistered number on the same schedule", async () => {
     /*
      * The property this whole design exists for.
