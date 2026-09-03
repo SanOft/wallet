@@ -245,6 +245,31 @@ describe("the allowlist is validated, not merely described (NFR-1.8)", () => {
   })
 })
 
+describe("a hosted deployment must say so (F18)", () => {
+  function withDeployment(overrides: NodeJS.ProcessEnv) {
+    return () =>
+      loadEnv({
+        DATABASE_URL: "postgresql://unused",
+        JWT_SECRET: "x".repeat(32),
+        CORS_ORIGINS: ORIGIN,
+        ...overrides,
+      })
+  }
+
+  it("refuses to boot on Render without NODE_ENV=production", () => {
+    // RENDER_GIT_COMMIT is the signal that this is a real deploy, not a
+    // laptop — and NODE_ENV's "development" default there would silently drop
+    // the Secure cookie flag and reopen the CORS_ORIGINS requirement above.
+    expect(withDeployment({ RENDER_GIT_COMMIT: "abc", NODE_ENV: "development" })).toThrow(
+      /NODE_ENV must be production/,
+    )
+  })
+
+  it("leaves a machine with no RENDER_GIT_COMMIT alone", () => {
+    expect(withDeployment({ NODE_ENV: "development" })).not.toThrow()
+  })
+})
+
 describe("rate limiting (§17.1 denial of service, §17.3)", () => {
   it("throttles registration far sooner than the global budget", async () => {
     // Registration being unthrottled is what made FR-4.9's per-user lookup cap
