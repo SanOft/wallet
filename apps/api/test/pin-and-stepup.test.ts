@@ -660,9 +660,10 @@ describe.skipIf(!hasDatabase)("confirming the password (FR-2.3, FR-2.8, FR-1.6)"
     const recipient = await account(app)
 
     /*
-     * One address for everything the budget is meant to count. Registration and
-     * the top-up above carry a password field too, but neither endpoint mounts
-     * this limiter, so they cannot spend it from anywhere.
+     * One address for everything the budget is meant to count. The
+     * registrations above carry a password field too, but `/auth/register` does
+     * not mount this limiter — it has its own — so they cannot spend it, and
+     * they are left on the default address regardless.
      */
     const METERED = "10.7.7.7"
 
