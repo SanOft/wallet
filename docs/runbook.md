@@ -546,8 +546,24 @@ which races the migration job and can start the new code against the old schema
 — the one ordering §19.1 exists to prevent.
 
 Environment variables on the service: `DATABASE_URL`, `JWT_SECRET` (32+ chars,
-generate it), `CORS_ORIGINS` (the Vercel origin), `NODE_ENV=production`. `PORT`
-is supplied by Render. Leave `REFRESH_COOKIE_DOMAIN` unset (ADR-0009).
+generate it), `CORS_ORIGINS` (the Vercel origin), `NODE_ENV=production`, and
+`TRUST_PROXY_HOPS=3`. `PORT` is supplied by Render. Leave
+`REFRESH_COOKIE_DOMAIN` unset (ADR-0009).
+
+**`TRUST_PROXY_HOPS=3` — measured, not counted (P-11).** Requests reach the
+process through the Vercel rewrite (ADR-0009) and Render, and how many entries
+those two together put in `X-Forwarded-For` is vendor behaviour rather than
+something the topology lets you count. It was measured: the deploy smoke's
+`GET /health` line read `proxyChain=3 trustedHops=1` on **2 September 2026**,
+on a request that sent no `X-Forwarded-For` of its own, so all three entries
+were added by a proxy. Too low and every caller shares one rate-limit bucket —
+20 registrations per 15 minutes for the whole internet (`security.ts`,
+`registerRateLimit`); too high and a forged header is believed. The smoke now
+fails when the two numbers disagree, so a later topology change stops the
+deploy instead of merging every caller into one bucket silently. Re-measure
+only from that log line: a browser-observed `/health` can be inflated by a
+caller seeding the header, and raising the count to match it is exactly the
+failure the count exists to prevent.
 
 **Vercel.** Import the repository with `apps/web` as the root. Then set the
 rewrite destination in `apps/web/vercel.json` to the Render URL — it ships as
