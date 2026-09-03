@@ -87,9 +87,9 @@ function condition(file: string, name: string): string {
 /**
  * One workflow's `on:` block, collapsed to a line, comments dropped.
  *
- * The comments go for the same reason `condition` stops at one: a comment
- * naming a trigger would otherwise satisfy an assertion about the trigger
- * existing.
+ * The comments go for the same reason `condition` stops folding at one: a
+ * comment naming a trigger would otherwise satisfy an assertion about that
+ * trigger existing.
  */
 function triggers(file: string): string {
   const lines = (workflows().find((w) => w.name === file)?.text ?? "").split("\n")
