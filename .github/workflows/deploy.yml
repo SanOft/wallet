@@ -27,7 +27,25 @@ jobs:
   # migrations mean the old API can run against the new schema for the length of
   # the deploy window; the reverse is not true.
   migrate:
-    if: github.event.workflow_run.conclusion == 'success'
+    # F1. `on.workflow_run.branches` above filters on the *head* branch of the
+    # triggering run, not on a branch of this repository — and a fork's default
+    # branch is called `main` too. So `branches: [main]` alone lets CI for a
+    # pull request from a fork start this deploy, which would check out the
+    # fork's commit and run its `.yarn/releases/*.cjs` (`.yarnrc.yml` names it)
+    # with the production database URL in the environment.
+    #
+    # These four clauses are the gate. `head_repository` is the field that
+    # separates this repository's `main` from a fork's; if GitHub ever omits it
+    # the comparison is false and the job skips, which is the safe direction.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    # Defence in depth, and where a deploy's history is visible as a list: the
+    # three production secrets are scoped to this environment rather than to the
+    # whole repository, so they have one place to be revoked from.
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -37,8 +55,25 @@ jobs:
       # worth more to an attacker than the same tag in CI.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          # The exact commit CI approved, not whatever main points at now.
-          ref: ${{ github.event.workflow_run.head_sha }}
+          # This repository's own `main`, with full history, so the check below
+          # has something to check against. The triggering commit is not on disk
+          # yet — that is the point of doing this first.
+          ref: main
+          fetch-depth: 0
+
+      # Runs before setup-node, and so before any install: `yarn install` would
+      # execute the checkout's own Yarn release, which for a fork's commit is
+      # the attacker's file. Prints the four gate values so a skipped or failed
+      # deploy says why in its own log.
+      - name: the approved commit is on main
+        env:
+          WANT: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          echo "event=${{ github.event.workflow_run.event }} head=${{ github.event.workflow_run.head_branch }} repo=${{ github.event.workflow_run.head_repository.full_name }}"
+          git merge-base --is-ancestor "$WANT" origin/main || { echo "::error::$WANT is not on main"; exit 1; }
+          # The exact commit CI approved, not whatever main points at now — now
+          # that it is proven to be one of main's ancestors.
+          git checkout --detach "$WANT"
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -82,6 +117,7 @@ jobs:
 
   release:
     needs: migrate
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -122,13 +158,26 @@ jobs:
 
   smoke:
     needs: release
+    environment: production
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
+      # The same two steps as `migrate`, for the same reason: this job also
+      # checks out `head_sha` and installs from it. A skipped `migrate` skips
+      # this job, but the proof is repeated rather than inherited — `needs:` is
+      # an ordering, not a guarantee about what is on this runner's disk.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: main
+          fetch-depth: 0
+      - name: the approved commit is on main
+        env:
+          WANT: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          echo "event=${{ github.event.workflow_run.event }} head=${{ github.event.workflow_run.head_branch }} repo=${{ github.event.workflow_run.head_repository.full_name }}"
+          git merge-base --is-ancestor "$WANT" origin/main || { echo "::error::$WANT is not on main"; exit 1; }
+          git checkout --detach "$WANT"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 22
