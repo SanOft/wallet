@@ -73,6 +73,8 @@ export function makeStore() {
       [authApi.reducerPath]: authApi.reducer,
       [walletApi.reducerPath]: walletApi.reducer,
     },
+    // Off in production: the extension it wires up hands anyone holding it a live read of every dispatched action and the full state tree, balances and transfer details included.
+    devTools: import.meta.env.DEV,
     middleware: (getDefault) =>
       // Before the API middleware: the cache must be gone by the time anything
       // reacts to the sign-out and starts fetching again.
