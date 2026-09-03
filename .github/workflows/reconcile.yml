@@ -1,0 +1,72 @@
+name: Reconcile
+
+# The daily reconciliation §20.4 asks for, as a thing that actually happens.
+#
+# `db:reconcile` has been a command since day 5 and nothing ran it: a reader of
+# §20.4 would have concluded the control was in place, and a drift could have
+# sat unreported for as long as it liked. This file is the whole scheduler —
+# there is no cron outside the repository — so the day is here, in review, with
+# the rest of the pipeline.
+#
+# 03:17 UTC rather than a round hour, because GitHub queues scheduled runs and
+# the top of an hour is where every repository's cron piles up. Seventeen
+# minutes cost nothing and buy a run that starts when it says it will.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  # The run somebody needs immediately after a repair, when "is it clean now?"
+  # is the only question worth asking and tomorrow is not an acceptable answer.
+  workflow_dispatch:
+
+# Read-only, and stated rather than inherited (P-5). A repository's default can
+# be write, which would hand every action in this file a token that can push to
+# `main`; this job reads the ledger and writes nothing anywhere.
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    # The production database URL is scoped to this environment rather than to
+    # the repository, so it has one place to be revoked from — the same scoping
+    # deploy.yml uses, and the reason this workflow lands behind that gate.
+    environment: production
+    runs-on: ubuntu-latest
+    # Three queries against an indexed pass. Ten minutes leaves room for a cold
+    # cache and none for a hang holding a runner for the default six hours.
+    timeout-minutes: 10
+
+    steps:
+      # Pinned by commit SHA, not by tag (P-5). This workflow holds the
+      # production database URL, so a moved tag here is worth more to an
+      # attacker than the same tag in CI.
+      #
+      # No fork gate of the kind deploy.yml carries, and none is needed:
+      # `schedule` fires only on the default branch of this repository, and
+      # `workflow_dispatch` is a button only somebody with write access can
+      # press. Neither trigger can be reached from a pull request.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: yarn install --immutable
+
+      # The alarm is this step's exit status. `runReconciliation` logs at
+      # `fatal` and exits 1 on a drift, a chain break or a non-zero global sum;
+      # a failed scheduled run is what emails the owner, which is the only
+      # notification channel this repository has. Nothing may swallow it — no
+      # `continue-on-error`, no `|| true`.
+      - name: reconcile the ledger
+        env:
+          # The pooled URL is fine here, unlike in a migration: this job only
+          # reads, and every query it runs stands alone.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # This job signs nothing, but `loadEnv` validates the whole schema at
+          # startup (NFR-1.9) and JWT_SECRET is required there, so without a
+          # value the run fails every night on configuration rather than on the
+          # ledger — and a nightly false alarm is how a real one gets ignored.
+          # A literal placeholder rather than `secrets.JWT_SECRET`, on purpose:
+          # a read-only job has no business holding the token-signing key, and
+          # the value below cannot mint a token for anything.
+          JWT_SECRET: reconcile-signs-nothing-not-a-real-key-0123456789
+        run: yarn workspace @wallet/api db:reconcile

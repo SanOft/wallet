@@ -84,6 +84,23 @@ function condition(file: string, name: string): string {
     .trim()
 }
 
+/**
+ * One workflow's `on:` block, collapsed to a line, comments dropped.
+ *
+ * The comments go for the same reason `condition` stops at one: a comment
+ * naming a trigger would otherwise satisfy an assertion about the trigger
+ * existing.
+ */
+function triggers(file: string): string {
+  const lines = (workflows().find((w) => w.name === file)?.text ?? "").split("\n")
+  const start = lines.findIndex((line) => line.trimEnd() === "on:")
+  expect(start, `${file} has no on: block`).toBeGreaterThanOrEqual(0)
+
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((line) => /^[\w-]+:/.test(line))
+  return flatten((end === -1 ? rest : rest.slice(0, end)).filter((l) => !l.trim().startsWith("#")))
+}
+
 const DEPENDABOT = fileURLToPath(new URL("../../../.github/dependabot.yml", import.meta.url))
 
 /** The lines of one `- package-ecosystem: <name>` entry, up to the next one. */
@@ -174,6 +191,62 @@ describe("the deploy workflow only runs code that is on main", () => {
         job("deploy.yml", name).map((l) => l.trim()),
         `deploy.yml: job ${name}`,
       ).toContain("environment: production")
+    }
+  })
+})
+
+describe("the ledger is reconciled on a schedule, not on request", () => {
+  /*
+   * §20.4 asks for a *daily* reconciliation. `db:reconcile` has been runnable
+   * since day 5 and nothing ran it, which is the same shape as the function
+   * nothing called that the command replaced: a control that has to be
+   * remembered is not a control.
+   *
+   * This file is the whole mechanism — `schedule` fires only on the default
+   * branch and there is no scheduler outside the repository to check against —
+   * so the cron is asserted here rather than trusted to a settings page.
+   */
+  it("fires daily on a cron and can still be run by hand", () => {
+    const on = triggers("reconcile.yml")
+
+    expect(on, "without the cron nothing calls db:reconcile").toContain('cron: "17 3 * * *"')
+    // The run somebody needs after a repair, when "is it clean now?" cannot
+    // wait until tomorrow.
+    expect(on, "an operator must be able to ask for a run").toContain("workflow_dispatch:")
+  })
+
+  it("runs the command itself, against the production database", () => {
+    const block = flatten(
+      job("reconcile.yml", "reconcile").filter((l) => !l.trim().startsWith("#")),
+    )
+
+    // The same scoping deploy.yml uses: one place to revoke the connection
+    // string from, rather than the whole repository.
+    expect(block, "the database URL must be an environment secret").toContain(
+      "environment: production",
+    )
+    expect(block, "must run the workspace command, not a copy of the query").toContain(
+      "yarn workspace @wallet/api db:reconcile",
+    )
+    // A pattern rather than a literal only because `${{` inside a TypeScript
+    // string is itself a lint error here; the text matched is exact.
+    expect(block, "the job has nothing to read without it").toMatch(
+      /DATABASE_URL: \$\{\{ secrets\.DATABASE_URL \}\}/,
+    )
+  })
+
+  it("lets a discrepancy fail the run", () => {
+    /*
+     * The alarm is the exit status: `runReconciliation` exits 1 on a drift, a
+     * chain break or a non-zero global sum, and a failed *scheduled* run is
+     * what emails the owner. `continue-on-error`, or a `|| true` on the step,
+     * turns the nightly alarm back into a log line nobody reads.
+     */
+    for (const line of job("reconcile.yml", "reconcile")) {
+      if (line.trim().startsWith("#")) continue
+      expect(line, `reconcile.yml swallows a failure: ${line.trim()}`).not.toMatch(
+        /continue-on-error|\|\| true/,
+      )
     }
   })
 })
