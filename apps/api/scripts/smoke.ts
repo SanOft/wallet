@@ -154,38 +154,42 @@ async function main(): Promise<void> {
     (r) => r.status === 200,
   )
   const version = String(health.body.version ?? "")
+  report(
+    "GET /health",
+    health.status === 200 && health.body.db === "up",
+    `status=${health.status} db=${String(health.body.db)} version=${version.slice(0, 7)}`,
+  )
+
   /*
-   * The proxy chain is reported, not asserted (P-11).
+   * The proxy chain is now asserted, because it has been measured (P-11,
+   * runbook T-6.1).
    *
    * How many proxies sit in front of the service is a fact about the
    * deployment that cannot be known from the code, and the count Express is
    * told to believe decides whether every caller shares one rate-limit bucket.
-   * Printing it here means the next deploy answers the question in its own log
-   * rather than waiting for somebody to go and measure. It is not a pass/fail
-   * because the right answer is not known yet — that is the point.
+   * This line used to print the two numbers and suggest the fix; the fix has
+   * been applied, so from here a topology change — dropping the rewrite,
+   * putting a CDN in front — fails the deploy instead of silently keying every
+   * caller into one bucket, which is an availability failure that reads like a
+   * security control working.
+   *
+   * Re-measure from *this* line and never from a browser: `X-Forwarded-For`
+   * grows by one for every proxy and a caller may start it off with a value of
+   * their own, so a forged entry makes the chain read one longer than it is,
+   * and an operator following that number would raise the trusted count until a
+   * forged address is believed — the opposite failure, and worse. This request
+   * carries no `X-Forwarded-For`, so every entry in the chain was added by a
+   * proxy.
+   *
+   * An absent field reads as -1 on both sides, so a real reading is required
+   * rather than two absences agreeing.
    */
   const chain = Number(health.body.proxyChain ?? -1)
   const trusted = Number(health.body.trustedHops ?? -1)
-
-  /*
-   * The suggestion is sound *here* and would not be from a browser.
-   *
-   * `X-Forwarded-For` grows by one for every proxy, and a caller may start it
-   * off with a value of their own: forge one entry and the chain reads one
-   * longer than it is. Following that number would set the trusted hop count
-   * too high, which is the failure where a forged address is believed — the
-   * opposite of the one this is meant to find, and worse.
-   *
-   * This request carries no `X-Forwarded-For` of its own, so every entry in it
-   * was added by a proxy, and the count is the number of proxies.
-   */
-  const agree =
-    chain === trusted ? "" : `  <-- this deployment has ${chain}; set TRUST_PROXY_HOPS to match`
-
   report(
-    "GET /health",
-    health.status === 200 && health.body.db === "up",
-    `status=${health.status} db=${String(health.body.db)} version=${version.slice(0, 7)} proxyChain=${chain} trustedHops=${trusted}${agree}`,
+    "proxy hops agree",
+    chain >= 0 && chain === trusted,
+    `proxyChain=${chain} trustedHops=${trusted}${chain === trusted ? "" : `  <-- this deployment has ${chain}; set TRUST_PROXY_HOPS to match`}`,
   )
   if (EXPECTED_VERSION && version !== EXPECTED_VERSION) {
     report(
