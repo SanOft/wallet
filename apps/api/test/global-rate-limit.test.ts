@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest"
 import { buildApp, PRISMA_STUB } from "./helpers.js"
 
 /**
- * The global budget actually fires, and the USSD callback actually escapes it.
+ * The global budget actually fires, and only a proven gateway escapes it.
  *
  * Both halves were introduced together with P-33's exemption and neither was
  * tested. One of them was wrong: `globalRateLimit()` was being called *inside*
@@ -19,6 +19,20 @@ import { buildApp, PRISMA_STUB } from "./helpers.js"
 
 /** `globalRateLimit`'s own budget. One more request than this must be refused. */
 const GLOBAL_MAX = 300
+
+/** Assembled rather than written out: a literal here trips the secret scanner. */
+const GATEWAY_SECRET = ["gateway", "secret", "for", "tests", "only", "0123456789"].join("-")
+
+/** A distinct subscriber per request, so nothing shares a per-subscriber bucket. */
+function callback(index: number) {
+  return {
+    sessionId: `s${index}`,
+    phoneNumber: `+99890000${String(1000 + index)}`,
+    networkCode: "62120",
+    serviceCode: "*880#",
+    text: "",
+  }
+}
 
 describe("the global rate limit (§17.3)", () => {
   it("refuses a caller that exceeds the budget", async () => {
@@ -49,33 +63,56 @@ describe("the global rate limit (§17.3)", () => {
     expect(new Set(statuses.slice(0, GLOBAL_MAX))).toEqual(new Set([404]))
   }, 120_000)
 
-  it("does not spend that budget on the USSD gateway callback", async () => {
+  it("spends that budget on the gateway path while no secret is configured", async () => {
     /*
-     * P-33's exemption. A carrier gateway is one address for a whole network,
-     * so the address-keyed budget would take the channel away from everybody
-     * behind it; `ussdGatewayRateLimit` meters that path per subscriber
-     * instead.
+     * P-33's exemption used to be the path itself, and an unset secret is the
+     * expected production state (FR-9.6) — so the one route that no
+     * configuration protects was also the one route no budget metered, and a
+     * caller that dialled it three hundred times paid nothing.
      *
-     * Asserted by exhausting the global budget first and then showing the
-     * callback still answers — the strongest form of "this path is exempt",
-     * and one that a per-request store would also have passed, which is why it
-     * is paired with the test above rather than standing alone.
+     * Distinct numbers per request, because the per-subscriber budget is what
+     * the exemption handed the path over to: keyed on the subscriber, three
+     * hundred subscribers is three hundred untouched buckets.
      */
-    const { app } = buildApp(PRISMA_STUB, { ...process.env })
+    const { app } = buildApp(PRISMA_STUB, { ...process.env, USSD_GATEWAY_SECRET: undefined })
     const agent = request.agent(app)
+    const statuses: number[] = []
 
-    for (let i = 0; i < GLOBAL_MAX + 1; i += 1) await agent.get("/api/nothing-here")
-    expect((await agent.get("/api/nothing-here")).status, "the budget is not spent").toBe(429)
+    for (let i = 0; i < GLOBAL_MAX + 1; i += 1) {
+      const res = await agent.post("/api/channels/ussd").send(callback(i))
+      statuses.push(res.status)
+      if (i === GLOBAL_MAX) expect(res.body.error.code).toBe("RATE_LIMITED")
+    }
 
+    expect(statuses[GLOBAL_MAX], "the gateway path is still unmetered").toBe(429)
+    // 401 from the route, which is what says the budget refused the last one
+    // rather than the route refusing all of them for its own reasons.
+    expect(new Set(statuses.slice(0, GLOBAL_MAX))).toEqual(new Set([401]))
+  }, 120_000)
+
+  it("spends it on a caller that cannot present the configured secret", async () => {
     /*
-     * Answered by the route rather than by the limiter. No gateway secret is
-     * configured here, so the route refuses it — with a 401, which is the
-     * route's own decision and proof the request reached it.
+     * The other half: a configured secret must not buy an exemption for
+     * somebody who does not have it. A wrong header and no header at all are
+     * the same caller — an ordinary one — and both pay the address budget.
      */
-    const callback = await agent
-      .post("/api/channels/ussd")
-      .send({ sessionId: "s", phoneNumber: "+998901234567", serviceCode: "*880#", text: "" })
+    const { app } = buildApp(PRISMA_STUB, {
+      ...process.env,
+      USSD_GATEWAY_SECRET: GATEWAY_SECRET,
+    })
+    const agent = request.agent(app)
+    const statuses: number[] = []
 
-    expect(callback.status, "the global budget swallowed the callback").not.toBe(429)
+    for (let i = 0; i < GLOBAL_MAX + 1; i += 1) {
+      const post = agent.post("/api/channels/ussd")
+      // Alternating, so neither shape can be the only one metered.
+      if (i % 2 === 0) post.set("x-gateway-secret", `${GATEWAY_SECRET}x`)
+      const res = await post.send(callback(i))
+      statuses.push(res.status)
+      if (i === GLOBAL_MAX) expect(res.body.error.code).toBe("RATE_LIMITED")
+    }
+
+    expect(statuses[GLOBAL_MAX], "an unproven caller is still exempt").toBe(429)
+    expect(new Set(statuses.slice(0, GLOBAL_MAX))).toEqual(new Set([401]))
   }, 120_000)
 })

@@ -1,4 +1,6 @@
+import { timingSafeEqual } from "node:crypto"
 import { isIP } from "node:net"
+import { normalizePhone, phoneSchema } from "@wallet/shared"
 import cors from "cors"
 import type { Request, RequestHandler, Response } from "express"
 import { ipKeyGenerator, rateLimit } from "express-rate-limit"
@@ -215,8 +217,35 @@ function limiter(options: {
   })
 }
 
-/** The path a real gateway posts to, exempt from the address-keyed budget. */
+/**
+ * The path a real gateway posts to, exempt from the address-keyed budget only
+ * for a caller that proves it is the gateway (`authenticGateway`).
+ */
 export const USSD_GATEWAY_PATH = "/api/channels/ussd"
+
+/**
+ * Constant-time, and closed when unset.
+ *
+ * `===` on a secret leaks its prefix through timing; the lengths are compared
+ * first because `timingSafeEqual` throws on a mismatch, and that throw is
+ * itself a length oracle if it escapes.
+ *
+ * Here rather than on the route because two callers need the same answer: the
+ * route, which refuses without it, and the global limiter, which is skipped
+ * only with it. A second implementation of this comparison is a second place
+ * for the unset case to be answered `true`.
+ */
+export function authenticGateway(
+  presented: string | undefined,
+  expected: string | undefined,
+): boolean {
+  if (!expected || !presented) return false
+
+  const a = Buffer.from(presented)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
 
 /**
  * The gateway callback, metered per subscriber rather than per address (P-33).
@@ -246,9 +275,23 @@ export function ussdGatewayRateLimit(refuse: (res: Response) => void): RequestHa
     // somebody checking a balance, and still a bound.
     max: 40,
     message: "Too many requests",
+    /*
+     * A *validated* number or the address, and nothing in between. Any
+     * non-empty string used to be a bucket, so fifteen kilobytes of digits —
+     * or a fresh nonce per request — minted an unshared budget every time,
+     * which is a per-request allowance on the one path that skips the address
+     * one. The length check comes first because the alternative is running a
+     * regex over whatever the caller sent.
+     *
+     * Normalised exactly as `ussdCallbackSchema` normalises it, so the budget
+     * and the handler agree on which subscriber a request belongs to; two
+     * spellings of one number must not be two budgets.
+     */
     keyGenerator: (req) => {
-      const phone = (req.body as { phoneNumber?: unknown } | undefined)?.phoneNumber
-      return typeof phone === "string" && phone.length > 0 ? `ussd:${phone}` : clientKey(req)
+      const raw = (req.body as { phoneNumber?: unknown } | undefined)?.phoneNumber
+      if (typeof raw !== "string" || raw.length > 32) return clientKey(req)
+      const parsed = phoneSchema.safeParse(normalizePhone(raw.trim()))
+      return parsed.success ? `ussd:${parsed.data}` : clientKey(req)
     },
     refuse,
   })
