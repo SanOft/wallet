@@ -19,7 +19,6 @@ import {
   VELOCITY_MAX_TRANSFERS,
   VELOCITY_WINDOW_MINUTES,
 } from "@wallet/shared"
-import { attemptSubject, verifySecret } from "../infra/crypto.js"
 import { LedgerRepository } from "../infra/LedgerRepository.js"
 import {
   DomainError,
@@ -256,36 +255,45 @@ export interface HistoryPage {
 /** Same seam as `RatesService`: the domain reports, the adapter logs (§8.3). */
 export type TransferWarning = (event: string, cause: unknown) => void
 
+/**
+ * FR-2.8's confirmation, as a port rather than as an import.
+ *
+ * `AuthService` owns it: it is the same credential login verifies, so it has to
+ * share login's counter and login's lock. Injected as a function rather than as
+ * a service so this file keeps knowing nothing about sessions, and so a test
+ * needs a two-line stub instead of an `AuthService` fixture.
+ */
+export type ConfirmPassword = (userId: string, password: string) => Promise<void>
+
 export interface TransferServiceDependencies {
   readonly prisma: PrismaClient
-  /**
-   * The same HMAC key `AuthService` uses for attempt subjects.
-   *
-   * Needed because a failed step-up is counted against the login backoff: it
-   * is the same credential, so it should share the same counter rather than
-   * open a second, unlimited door to guessing it. The coupling is one field
-   * and the alternative was a duplicate counter that the two services would
-   * eventually disagree about.
-   */
-  readonly pepper: string
+  readonly confirmPassword?: ConfirmPassword
   readonly warn?: TransferWarning
   readonly now?: () => Date
 }
 
 export class TransferService {
   readonly #prisma: PrismaClient
-  readonly #pepper: string
+  readonly #confirmPassword: ConfirmPassword
   readonly #warn: TransferWarning
   readonly #now: () => Date
 
   constructor({
     prisma,
-    pepper,
+    /*
+     * Optional, and the default refuses rather than passes. A service composed
+     * without the port can still run every path that needs no confirmation —
+     * USSD, top-ups, transfers under the threshold — and a large web transfer
+     * is then a wiring fault reported as one, never a step-up waved through.
+     */
+    confirmPassword = () => {
+      throw new Error("no password confirmation was provided to TransferService")
+    },
     warn = () => {},
     now = () => new Date(),
   }: TransferServiceDependencies) {
     this.#prisma = prisma
-    this.#pepper = pepper
+    this.#confirmPassword = confirmPassword
     this.#warn = warn
     this.#now = now
   }
@@ -562,37 +570,16 @@ export class TransferService {
       throw new DomainError("STEP_UP_REQUIRED", "This amount requires the account password")
     }
 
-    const user = await this.#prisma.user.findUnique({
-      where: { id: input.senderUserId },
-      select: { passwordHash: true },
-    })
-    if (!user) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
-
-    if (!(await verifySecret(user.passwordHash, input.password))) {
-      /*
-       * Recorded as a failed attempt against the same subject the login
-       * backoff counts, so a session holder cannot use transfers as an
-       * unlimited password oracle. The cost is that a mistyped confirmation
-       * slows the next sign-in — which is the correct trade when the
-       * alternative is an offline-speed guess against a live account.
-       */
-      await this.#prisma.authAttempt.create({
-        data: {
-          userId: input.senderUserId,
-          subject: attemptSubject(await this.#phoneOf(input.senderUserId), this.#pepper),
-          succeeded: false,
-        },
-      })
-      throw new DomainError("STEP_UP_FAILED", "The password did not match")
-    }
-  }
-
-  async #phoneOf(userId: string): Promise<string> {
-    const user = await this.#prisma.user.findUnique({
-      where: { id: userId },
-      select: { phone: true },
-    })
-    return user?.phone ?? ""
+    /*
+     * Verified by `AuthService`, behind FR-2.3's backoff, and counted against
+     * the same subject a login is. This is the same credential, so a session
+     * holder guessing it here waits exactly as long as one guessing it at the
+     * sign-in screen — and after three wrong confirmations this answers
+     * `AUTH_LOCKED` rather than `STEP_UP_FAILED`. The cost is that a mistyped
+     * confirmation slows the next sign-in, which is the correct trade when the
+     * alternative is an offline-speed guess against a live account.
+     */
+    await this.#confirmPassword(input.senderUserId, input.password)
   }
 
   /** Turns a stored outcome back into a return value or the original refusal. */

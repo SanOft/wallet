@@ -443,6 +443,65 @@ export class AuthService {
   }
 
   /**
+   * The account password, proved again by somebody already holding a session
+   * (FR-2.8's step-up, FR-1.6's PIN change).
+   *
+   * One operation, here, rather than one per caller. It is the same credential
+   * login verifies, so it counts against the same subject and waits on the same
+   * backoff: a second implementation somewhere else is a second door to the
+   * password with no counter on it, which is what a held session would use —
+   * offline-speed guessing against a live account, and free.
+   *
+   * `STEP_UP_FAILED`, not `AUTH_INVALID_CREDENTIALS`. The session is fine; the
+   * confirmation was wrong. A 401 here would send the client off to refresh a
+   * token that never expired and retry a request that fails the same way.
+   *
+   * A success writes `succeeded: true`, which clears the consecutive-failure
+   * count exactly as a completed sign-in does — somebody who mistypes twice and
+   * then proves the password must not be one slip from a lockout.
+   *
+   * `#serialised` on the same key `login` uses, so a burst of confirmations for
+   * one account is counted as if it had arrived one at a time, and so a
+   * confirmation cannot race a sign-in for the same number.
+   */
+  async confirmPassword(userId: string, password: string): Promise<void> {
+    const user = await this.#prisma.user.findUnique({
+      where: { id: userId },
+      select: { phone: true, passwordHash: true },
+    })
+
+    // A token for a user who no longer exists is a credential that should stop
+    // working, not a 404.
+    if (!user) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
+
+    const subject = attemptSubject(user.phone, this.#pepper)
+
+    const outcome = await this.#serialised(`auth:${subject}`, async (tx) => {
+      // Before the verify, for the reason `login` gives: hashing first spends an
+      // argon2 on every request an attacker sends, which turns the defence into
+      // the denial of service it exists to prevent.
+      const waitFor = await this.#backoffSeconds(subject, tx)
+      if (waitFor > 0) return { kind: "locked" as const, waitFor }
+
+      const matches = await verifySecret(user.passwordHash, password)
+
+      // With `userId` set, unlike a login for an unknown number: this caller
+      // held a token for the account, so the attempt really is theirs.
+      await tx.authAttempt.create({ data: { userId, subject, succeeded: matches } })
+
+      return matches ? { kind: "ok" as const } : { kind: "failed" as const }
+    })
+
+    // Thrown after the transaction commits, not from inside it: a throw rolls
+    // back the attempt row this just wrote, and that row is what the next
+    // request counts.
+    if (outcome.kind === "locked") throw new AccountLockedError(outcome.waitFor)
+    if (outcome.kind === "failed") {
+      throw new DomainError("STEP_UP_FAILED", "Password confirmation failed")
+    }
+  }
+
+  /**
    * FR-2.6 rotation and FR-2.7 reuse detection, S-4.
    *
    * A token that has already been exchanged coming back means one of two
@@ -540,24 +599,9 @@ export class AuthService {
    * them locked out of a PIN they have just chosen is punishing the recovery.
    */
   async setPin(userId: string, currentPassword: string, pin: string): Promise<void> {
-    const user = await this.#prisma.user.findUnique({
-      where: { id: userId },
-      select: { passwordHash: true },
-    })
-
-    // A token for a user who no longer exists is a credential that should stop
-    // working, not a 404.
-    if (!user) throw new DomainError("AUTH_TOKEN_EXPIRED", "Access token is not valid")
-
-    if (!(await verifySecret(user.passwordHash, currentPassword))) {
-      /*
-       * `STEP_UP_FAILED`, not `AUTH_INVALID_CREDENTIALS`. The session is fine;
-       * the confirmation was wrong. A 401 here would send the client off to
-       * refresh a token that never expired and retry a request that would fail
-       * again the same way.
-       */
-      throw new DomainError("STEP_UP_FAILED", "Password confirmation failed")
-    }
+    // Through `confirmPassword`, so this endpoint sits behind FR-2.3's backoff
+    // rather than offering an unmetered way to guess the same password.
+    await this.confirmPassword(userId, currentPassword)
 
     await this.#prisma.user.update({
       where: { id: userId },

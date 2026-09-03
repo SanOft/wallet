@@ -407,6 +407,25 @@ describe("step 3 — the last chance to stop", () => {
     expect(transferCalls[0]?.key).toBe(transferCalls[1]?.key)
   })
 
+  it("says to wait, not to retype, when the confirmations have run out", async () => {
+    transferReplies = [{ status: 429, body: { error: { code: "AUTH_LOCKED" } } }]
+    await reachConfirm("2000000")
+    await userEvent.type(screen.getByLabelText(/^parol$/i), SECRET)
+    await userEvent.click(screen.getByRole("button", { name: /^yuborish$/i }))
+
+    /*
+     * FR-2.8's confirmation shares the sign-in's backoff, so this is what the
+     * fourth wrong password answers. Falling through to the generic "could not
+     * be done" would leave somebody typing a password that is now correct and
+     * still refused, spending their lockout on it.
+     */
+    expect(await screen.findByRole("alert")).toHaveTextContent(/qayta urinib ko'ring/i)
+
+    // And it is not queued: 429 is a final answer, and a queued transfer could
+    // not carry the password anyway.
+    expect(await queuedItems()).toHaveLength(0)
+  })
+
   it("keeps the user here when the refusal is one they can act on", async () => {
     transferReplies = [{ status: 422, body: { error: { code: "INSUFFICIENT_FUNDS" } } }]
     await reachConfirm("1000")

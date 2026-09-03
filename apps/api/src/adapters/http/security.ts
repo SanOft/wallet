@@ -191,6 +191,8 @@ function limiter(options: {
   readonly skipPreflight?: boolean
   /** Only failures count. See `loginRateLimit`. */
   readonly skipSuccessful?: boolean
+  /** Requests this budget has nothing to say about. See `passwordConfirmRateLimit`. */
+  readonly skip?: (req: Request) => boolean
   /** Meter something other than the address. See `ussdGatewayRateLimit`. */
   readonly keyGenerator?: (req: Request) => string
   /** Answer in something other than the §12.3 envelope. Same reason. */
@@ -203,7 +205,13 @@ function limiter(options: {
     standardHeaders: "draft-7",
     legacyHeaders: false,
     keyGenerator: options.keyGenerator ?? clientKey,
-    ...(options.skipPreflight ? { skip: (req: Request) => req.method === "OPTIONS" } : {}),
+    ...(options.skipPreflight || options.skip
+      ? {
+          skip: (req: Request) =>
+            (options.skipPreflight === true && req.method === "OPTIONS") ||
+            options.skip?.(req) === true,
+        }
+      : {}),
     // Routed through the error handler so a throttled caller gets the §12.3
     // envelope like every other failure, rather than express-rate-limit's own
     // plain-text body.
@@ -377,5 +385,41 @@ export function loginRateLimit(): RequestHandler {
      * completed sign-in is free, which is the whole intent.
      */
     skipSuccessful: true,
+  })
+}
+
+/**
+ * The password confirmed again by somebody already signed in: FR-2.8's step-up
+ * and FR-1.6's PIN change.
+ *
+ * The same shape and the same size as `loginRateLimit`, because it bounds the
+ * same thing — how fast one address can guess an account password — and a
+ * separate budget from it on purpose. A user's ordinary refused transfers are
+ * failures too (insufficient funds, a limit, a recipient who is not registered)
+ * and folding those into the sign-in allowance would let a bad afternoon of
+ * declined payments lock somebody out of their own login.
+ *
+ * `skip` is what keeps the two apart in the other direction: a request that
+ * carries no password is not a confirmation, so it never spends this. Without
+ * it, every transfer on the endpoint would meter against a budget sized for
+ * guessing, and fifty declined payments an hour would stop the fifty-first
+ * legitimate one.
+ */
+export function passwordConfirmRateLimit(): RequestHandler {
+  return limiter({
+    windowMs: 15 * 60 * 1000,
+    max: 50,
+    message: "Too many authentication attempts",
+    skipPreflight: true,
+    // Only failures, as at the sign-in screen: confirming correctly is the
+    // thing people do, and it costs the shared address nothing.
+    skipSuccessful: true,
+    skip: (req) => {
+      // The two field names the transfer body and the PIN body carry it under.
+      // Read defensively: this runs after `express.json`, but a body that never
+      // parsed is `undefined` and a non-object one is whatever was sent.
+      const body = req.body as { password?: unknown; currentPassword?: unknown } | undefined
+      return typeof body?.password !== "string" && typeof body?.currentPassword !== "string"
+    },
   })
 }
