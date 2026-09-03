@@ -46,6 +46,120 @@ function uses(): { file: string; line: string }[] {
   )
 }
 
+/**
+ * The lines of one job's block, from `  <name>:` up to the next job.
+ *
+ * Lexical rather than parsed, for the same reason the rest of this file is: a
+ * YAML parser would be a dependency in the production tree, and every rule
+ * asserted here is about the literal text a reviewer reads.
+ */
+function job(file: string, name: string): string[] {
+  const text = workflows().find((w) => w.name === file)?.text ?? ""
+  const lines = text.split("\n")
+  const start = lines.findIndex((line) => line.trimEnd() === `  ${name}:`)
+  expect(start, `${file} has no job named ${name}`).toBeGreaterThanOrEqual(0)
+
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((line) => /^ {2}[\w-]+:/.test(line))
+  return end === -1 ? rest : rest.slice(0, end)
+}
+
+/** A job's `if:` value on one line, folded blocks included. */
+function condition(file: string, name: string): string {
+  const lines = job(file, name)
+  const start = lines.findIndex((line) => /^ {4}if:/.test(line))
+  expect(start, `${file}: job ${name} has no if:`).toBeGreaterThanOrEqual(0)
+
+  /*
+   * The folded block ends at the next key *or comment* at the job's own
+   * indentation. Stopping only at a key would fold the comments that follow
+   * into the value, and then a comment naming a clause would satisfy the
+   * assertions below without the clause existing.
+   */
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((line) => /^ {4}(#|[\w-]+:)/.test(line))
+  return [lines[start], ...(end === -1 ? rest : rest.slice(0, end))]
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+describe("the deploy workflow only runs code that is on main", () => {
+  /*
+   * F1. `on.workflow_run.branches` filters on the *head* branch of the run that
+   * triggered this one, and a fork's default branch is called `main` too — so
+   * that filter alone lets CI for a pull request from a fork start the deploy,
+   * which checks out the fork's commit and runs its `.yarn/releases` binary
+   * with the production database URL in the environment.
+   *
+   * The gate is the job-level `if` plus an ancestry proof taken before any code
+   * from the triggering commit is on disk. Both halves are asserted, because
+   * either one alone is a deploy that can be made to run attacker-authored
+   * code.
+   */
+  it("gates migrate on a push to this repository's own main", () => {
+    const gate = condition("deploy.yml", "migrate")
+
+    expect(gate, "a red CI run must not deploy").toContain(
+      "github.event.workflow_run.conclusion == 'success'",
+    )
+    // Without this clause a pull_request-triggered CI run reaches the job.
+    expect(gate, "a pull request must not deploy").toContain(
+      "github.event.workflow_run.event == 'push'",
+    )
+    expect(gate, "only main deploys").toContain("github.event.workflow_run.head_branch == 'main'")
+    // Without this clause a fork's own `main` satisfies the branch clause.
+    expect(gate, "only this repository deploys").toContain(
+      "github.event.workflow_run.head_repository.full_name == github.repository",
+    )
+  })
+
+  it("proves the commit is on main before running anything from it", () => {
+    // Both jobs check out `head_sha`; both must earn it first.
+    for (const name of ["migrate", "smoke"]) {
+      const lines = job("deploy.yml", name)
+      const check = lines.findIndex((line) => line.includes("git merge-base --is-ancestor"))
+      expect(check, `deploy.yml: job ${name} never proves the commit is on main`).toBeGreaterThan(0)
+
+      const before = lines.slice(0, check)
+      expect(
+        before.join("\n"),
+        `deploy.yml: job ${name} must check out main with full history first`,
+      ).toContain("ref: main")
+      expect(before.join("\n"), `deploy.yml: job ${name} needs history to walk`).toContain(
+        "fetch-depth: 0",
+      )
+
+      /*
+       * `yarn install` runs the checkout's own `.yarn/releases/*.cjs` — see
+       * `.yarnrc.yml` — so an install before the ancestry check is already
+       * arbitrary code execution, whatever the later steps do.
+       */
+      for (const line of before) {
+        if (line.trim().startsWith("#")) continue
+        expect(
+          line,
+          `deploy.yml: job ${name} runs project tooling before the ancestry check`,
+        ).not.toMatch(/\b(yarn|corepack)\b/)
+      }
+    }
+  })
+
+  it("puts every job that holds a production secret in the production environment", () => {
+    /*
+     * Defence in depth behind the `if`, and the only place a deploy's history
+     * is visible as a list. It also gives the secrets one scope to be revoked
+     * from, rather than the whole repository.
+     */
+    for (const name of ["migrate", "release", "smoke"]) {
+      expect(
+        job("deploy.yml", name).map((l) => l.trim()),
+        `deploy.yml: job ${name}`,
+      ).toContain("environment: production")
+    }
+  })
+})
+
 describe("the workflows' supply chain", () => {
   it("finds workflows at all", () => {
     // Without this, a rename of the directory turns every assertion below into
