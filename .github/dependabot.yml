@@ -17,3 +17,40 @@ updates:
     open-pull-requests-limit: 3
     commit-message:
       prefix: chore
+
+  # Dependabot for the npm workspace (T14). Minor and patch bumps are grouped
+  # into one pull request a week, for the same reason as the github-actions
+  # updater above: patch noise should not become a reason to stop reading pull
+  # requests. Majors are excluded for prisma, react and vite because each one
+  # is a deliberate upgrade — a schema migration, a rendering change, a build
+  # pipeline change — not something a grouped, unread bump should ever carry.
+  #
+  # A Prisma bump is still the trigger to re-run `yarn why mysql2` and check
+  # whether the `resolutions` override at PARKING P-41 can come out; that stays
+  # a manual check because nothing here reads what the advisory now covers.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: prisma
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@prisma/*"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: react
+        update-types:
+          - version-update:semver-major
+      - dependency-name: react-dom
+        update-types:
+          - version-update:semver-major
+      - dependency-name: vite
+        update-types:
+          - version-update:semver-major
