@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto"
 import type { PrismaClient } from "@prisma/client"
 import { ussdCallbackSchema } from "@wallet/shared"
 import express, { type Response, Router } from "express"
@@ -7,7 +6,7 @@ import type { TokenService } from "../../../infra/jwt.js"
 import type { UssdAdapter, UssdReply } from "../../ussd/UssdAdapter.js"
 import { requireAuth } from "../middleware/requireAuth.js"
 import { requireCurrentSession } from "../middleware/requireCurrentSession.js"
-import { ussdGatewayRateLimit } from "../security.js"
+import { authenticGateway, ussdGatewayRateLimit } from "../security.js"
 
 /**
  * FR-9.1's callback, and FR-9.6's simulator, on one handler.
@@ -65,6 +64,20 @@ export function ussdRouter({
   router.post(
     "/api/channels/ussd",
     /*
+     * First, and before anything reads the body. The check needs one header,
+     * so a caller who cannot prove it is the gateway never has sixteen
+     * kilobytes parsed on its behalf — and it is exactly that caller who has
+     * no reason to be here.
+     */
+    (req, _res, next) => {
+      if (!authenticGateway(req.get("x-gateway-secret"), gatewaySecret)) {
+        // A JSON 401. The caller here is an integration, not a person holding
+        // a phone, and it is the one caller that can read this envelope.
+        throw new DomainError("AUTH_INVALID_CREDENTIALS", "Gateway secret is not valid")
+      }
+      next()
+    },
+    /*
      * Gateways post form-encoded bodies; `express.json` upstream does not
      * touch those, so without this the route sees an empty object and answers
      * every real callback with a validation error. Mounted here rather than
@@ -75,19 +88,15 @@ export function ussdRouter({
     /*
      * After the body parser, deliberately: the budget is keyed on the
      * subscriber's number and that number arrives in the form body (P-33).
-     * Mounted before the secret check, so a flood cannot be made cheaper by
-     * omitting the header.
+     * Behind the secret check rather than in front of it, because the address
+     * budget now meters everybody who cannot present the secret — a caller
+     * that omits the header pays there, and one that presents it is a gateway
+     * whose flood belongs to a subscriber.
      */
     ussdGatewayRateLimit((res) =>
       sendReply(res, { kind: "END", text: "Xizmat band. Birozdan so'ng urinib ko'ring." }),
     ),
     async (req, res) => {
-      if (!authenticGateway(req.get("x-gateway-secret"), gatewaySecret)) {
-        // A JSON 401. The caller here is an integration, not a person holding
-        // a phone, and it is the one caller that can read this envelope.
-        throw new DomainError("AUTH_INVALID_CREDENTIALS", "Gateway secret is not valid")
-      }
-
       const callback = ussdCallbackSchema.safeParse(req.body)
       if (!callback.success) {
         const subscriberFault = callback.error.issues.some((issue) =>
@@ -151,20 +160,4 @@ export function ussdRouter({
   )
 
   return router
-}
-
-/**
- * Constant-time, and closed when unset.
- *
- * `===` on a secret leaks its prefix through timing; the lengths are compared
- * first because `timingSafeEqual` throws on a mismatch, and that throw is
- * itself a length oracle if it escapes.
- */
-function authenticGateway(presented: string | undefined, expected: string | undefined): boolean {
-  if (!expected || !presented) return false
-
-  const a = Buffer.from(presented)
-  const b = Buffer.from(expected)
-  if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
 }

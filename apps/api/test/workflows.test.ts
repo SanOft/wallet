@@ -84,6 +84,24 @@ function condition(file: string, name: string): string {
     .trim()
 }
 
+const DEPENDABOT = fileURLToPath(new URL("../../../.github/dependabot.yml", import.meta.url))
+
+/** The lines of one `- package-ecosystem: <name>` entry, up to the next one. */
+function update(ecosystem: string): string[] {
+  const lines = readFileSync(DEPENDABOT, "utf8").split("\n")
+  const start = lines.findIndex((line) => line.trim() === `- package-ecosystem: ${ecosystem}`)
+  expect(start, `dependabot.yml has no ${ecosystem} update entry`).toBeGreaterThanOrEqual(0)
+
+  const rest = lines.slice(start + 1)
+  const end = rest.findIndex((line) => /^ {2}- package-ecosystem:/.test(line))
+  return lines.slice(start, end === -1 ? undefined : start + 1 + end)
+}
+
+/** An update entry collapsed to one line, so a value's own indentation cannot hide it. */
+function flatten(lines: string[]): string {
+  return lines.join(" ").replace(/\s+/g, " ").trim()
+}
+
 describe("the deploy workflow only runs code that is on main", () => {
   /*
    * F1. `on.workflow_run.branches` filters on the *head* branch of the run that
@@ -274,5 +292,43 @@ describe("the workflows' supply chain", () => {
       "utf8",
     )
     expect(config).toContain("github-actions")
+  })
+})
+
+describe("dependabot covers the npm workspace too", () => {
+  /*
+   * T14. The workflow updater above only ever sees `actions/checkout` and its
+   * neighbours; every dependency the application itself runs on — Prisma,
+   * React, the rest of `package.json` — has no updater at all without this
+   * entry.
+   */
+  it("watches the workspace root weekly with a bounded review queue", () => {
+    const block = flatten(update("npm"))
+    expect(block, "must scan the workspace root, where the lockfile lives").toContain(
+      "directory: /",
+    )
+    expect(block, "must check for updates weekly").toContain("schedule: interval: weekly")
+    // Same reasoning as the github-actions updater: an unbounded queue of pull
+    // requests is as unread as no updater at all.
+    expect(block, "must cap open pull requests at 5").toContain("open-pull-requests-limit: 5")
+  })
+
+  it("groups minor and patch bumps into one weekly pull request", () => {
+    const block = flatten(update("npm"))
+    expect(block, "minor and patch bumps must land in one reviewable group").toContain(
+      "groups: minor-and-patch: update-types: - minor - patch",
+    )
+  })
+
+  it("leaves prisma, react and vite majors for a deliberate upgrade", () => {
+    const block = flatten(update("npm"))
+    // Each of these majors is a decision (a schema migration, a rendering
+    // change, a build-pipeline change), not something a grouped, unread bump
+    // should ever carry through.
+    for (const name of ["prisma", '"@prisma/*"', "react", "react-dom", "vite"]) {
+      expect(block, `${name} must be excluded from automatic major bumps`).toContain(
+        `dependency-name: ${name} update-types: - version-update:semver-major`,
+      )
+    }
   })
 })

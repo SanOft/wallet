@@ -677,6 +677,98 @@ describe.skipIf(!hasDatabase)("the gateway door (FR-9.1)", () => {
     expect(replies.some((text) => text.startsWith("END Xizmat band"))).toBe(true)
   }, 60_000)
 
+  it("carries the whole gateway past the address budget, and still meters each subscriber", async () => {
+    /*
+     * The exemption is the *proof*, not the path. Both halves are asserted
+     * together because they are one decision: what a valid secret buys is
+     * exactly the address budget, and what it does not buy is the
+     * per-subscriber one.
+     *
+     * Three hundred subscribers rather than fifty, deliberately — fifty is
+     * inside `globalRateLimit`'s allowance, so it would pass with no exemption
+     * at all. Three hundred and one requests from one address is the number
+     * that budget refuses.
+     */
+    const { app } = buildApp(prisma, { ...process.env, USSD_GATEWAY_SECRET: GATEWAY_SECRET })
+    const agent = request.agent(app)
+
+    for (let i = 0; i <= 300; i++) {
+      const res = await agent
+        .post("/api/channels/ussd")
+        .set("x-gateway-secret", GATEWAY_SECRET)
+        .send({ ...callback(), phoneNumber: `+99890${String(100000 + i)}` })
+
+      expect(res.status, `subscriber ${i + 1} of 301`).toBe(200)
+      expect(res.text, `subscriber ${i + 1} of 301`).toMatch(/^CON /)
+    }
+
+    const replies: string[] = []
+    for (let i = 0; i < 41; i++) {
+      const res = await agent
+        .post("/api/channels/ussd")
+        .set("x-gateway-secret", GATEWAY_SECRET)
+        .send({ ...callback(), phoneNumber: "+998900002222" })
+
+      expect(res.status, `request ${i + 1} of 41`).toBe(200)
+      replies.push(res.text)
+    }
+
+    // Forty for one subscriber, and the forty-first ends the session in the
+    // channel's own language rather than in a §12.3 envelope.
+    expect(new Set(replies.slice(0, 40)).size, "the budget fired early").toBe(1)
+    expect(replies[0]).toMatch(/^CON /)
+    expect(replies[40]).toBe("END Xizmat band. Birozdan so'ng urinib ko'ring.")
+  }, 180_000)
+
+  it("meters a phone number too long to be one on the address instead", async () => {
+    /*
+     * The per-subscriber key used to be any non-empty string, so a caller who
+     * sent fifteen kilobytes of digits minted a bucket nothing else would ever
+     * share — a fresh budget per request, from one address, on the path that
+     * skips the address budget. The key is now a *validated* number or the
+     * address, and this asserts the fallback by exhausting the address bucket.
+     */
+    const { app } = buildApp(prisma, { ...process.env, USSD_GATEWAY_SECRET: GATEWAY_SECRET })
+    const agent = request.agent(app)
+
+    const replies: string[] = []
+    for (let i = 0; i < 41; i++) {
+      const res = await agent
+        .post("/api/channels/ussd")
+        .set("x-gateway-secret", GATEWAY_SECRET)
+        // A different fifteen kilobytes per request: keyed on the string, each
+        // of these is a bucket of its own and nothing is ever refused.
+        .send({ ...callback(), phoneNumber: `${"9".repeat(15_000)}${i}` })
+
+      expect(res.status, `request ${i + 1} of 41`).toBe(200)
+      replies.push(res.text)
+    }
+
+    // The first forty reached the handler, which answered the subscriber's own
+    // fault as text; the forty-first never got there.
+    expect(new Set(replies.slice(0, 40))).toEqual(new Set(["END So'rov noto'g'ri."]))
+    expect(replies[40]).toBe("END Xizmat band. Birozdan so'ng urinib ko'ring.")
+  }, 60_000)
+
+  it("parses no body for a caller that has not proven itself", async () => {
+    /*
+     * The secret check needs one header, so it runs before the body parser: a
+     * caller who cannot present it must not be able to spend the route's
+     * parsing budget, and the request that establishes that is one the parser
+     * would refuse. Answered `401`, so nothing looked at the body — with the
+     * parser in front it is `400 MALFORMED_BODY`, from a charset it will not
+     * decode.
+     */
+    const { app } = buildApp(prisma, { ...process.env, USSD_GATEWAY_SECRET: GATEWAY_SECRET })
+    const res = await request(app)
+      .post("/api/channels/ussd")
+      .set("content-type", "application/x-www-form-urlencoded; charset=utf-16")
+      .send(`text=${"9".repeat(15_000)}`)
+
+    expect(res.status).toBe(401)
+    expect(res.body.error.code).toBe("AUTH_INVALID_CREDENTIALS")
+  })
+
   it("refuses a caller with the wrong secret", async () => {
     const { app } = buildApp(prisma, { ...process.env, USSD_GATEWAY_SECRET: GATEWAY_SECRET })
     const res = await request(app)
