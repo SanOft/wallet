@@ -276,3 +276,83 @@ describe("the workflows' supply chain", () => {
     expect(config).toContain("github-actions")
   })
 })
+
+describe("the ledger reconciliation runs on its own", () => {
+  /*
+   * §20.4 asks for a daily reconciliation, and `db:reconcile` has existed since
+   * day 5 as a command nothing ran — which is the same shape of gap as a
+   * function called only by its own test: the control reads as present and
+   * fires never.
+   *
+   * The schedule is the control, so it is asserted here rather than left to
+   * whoever next edits the file. A commented-out cron, or a trigger narrowed to
+   * `workflow_dispatch` while somebody debugged it, is invisible in review and
+   * silent afterwards: a job that stops running produces no failures at all.
+   */
+  const FILE = "reconcile.yml"
+
+  /**
+   * The trigger block: everything above `jobs:`, so a `schedule:` key nested
+   * inside a job cannot satisfy the assertions below.
+   */
+  function triggers(): string[] {
+    const text = workflows().find((w) => w.name === FILE)?.text
+    expect(text, `${FILE} is missing`).toBeDefined()
+
+    const lines = (text ?? "").split("\n")
+    const end = lines.findIndex((line) => line.trimEnd() === "jobs:")
+    expect(end, `${FILE} has no jobs block`).toBeGreaterThan(0)
+    return lines.slice(0, end)
+  }
+
+  it("runs daily on a schedule, and on request", () => {
+    const lines = triggers()
+
+    const schedule = lines.findIndex((line) => line.trimEnd() === "  schedule:")
+    expect(
+      schedule,
+      `${FILE}: no schedule trigger, so §20.4's daily run never happens`,
+    ).toBeGreaterThanOrEqual(0)
+    expect(
+      lines.slice(schedule).map((line) => line.trim()),
+      `${FILE}: the cron must fire once a day`,
+    ).toContain('- cron: "17 3 * * *"')
+
+    // The other half: a discrepancy is repaired and re-checked the same hour,
+    // not a day later.
+    expect(
+      lines.map((line) => line.trimEnd()),
+      `${FILE}: no way to run it by hand`,
+    ).toContain("  workflow_dispatch:")
+  })
+
+  it("runs the command, and lets its exit status fail the run", () => {
+    const lines = job(FILE, "reconcile").map((line) => line.trim())
+    const step = lines.find((line) => line.includes("db:reconcile"))
+
+    /*
+     * `runReconciliation` exits 1 on a drift, and a failed scheduled run is the
+     * whole notification: GitHub emails the owner on it. A trailing `|| true`,
+     * or `continue-on-error`, would keep the run green and turn §20.4's fatal
+     * log into a line nobody reads — so the command is asserted whole, with
+     * nothing appended to it.
+     */
+    expect(step, `${FILE}: the job never runs the reconciliation, unwrapped`).toBe(
+      "run: yarn workspace @wallet/api db:reconcile",
+    )
+    expect(lines, `${FILE}: a drift must fail the run`).not.toContain("continue-on-error: true")
+  })
+
+  it("takes the production database URL in the production environment", () => {
+    const lines = job(FILE, "reconcile").map((line) => line.trim())
+
+    // Same reasoning as deploy.yml: the secret is scoped to one environment, so
+    // it has one place to be revoked from rather than the whole repository.
+    expect(lines, `${FILE}: job reconcile`).toContain("environment: production")
+    // A regex rather than a literal: a `${{ ... }}` expression in a string is
+    // the shape of an unevaluated template, and the linter refuses it.
+    expect(lines.join("\n"), `${FILE}: the job needs the database it reconciles`).toMatch(
+      /^DATABASE_URL: \$\{\{ secrets\.DATABASE_URL \}\}$/m,
+    )
+  })
+})

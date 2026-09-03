@@ -11,8 +11,10 @@ import { isHealthy, reconcile } from "../infra/reconciliation.js"
  * was in place. A function invoked only by its own test is not a control, it
  * is a fixture.
  *
- * Scheduled at deploy time (day 6). Exits non-zero on a discrepancy so a cron
- * wrapper or a CI job fails loudly rather than logging into the void.
+ * `.github/workflows/reconcile.yml` runs it daily at 03:17 UTC, and on request.
+ * It exits non-zero on a discrepancy, which fails that run — and a failed
+ * scheduled run is what reaches the owner, rather than a fatal log nobody is
+ * watching for.
  */
 export async function runReconciliation(): Promise<boolean> {
   const env = loadEnv()

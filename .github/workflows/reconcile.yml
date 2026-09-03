@@ -1,0 +1,66 @@
+name: Reconcile
+
+# The daily ledger reconciliation §20.4 asks for.
+#
+# `db:reconcile` has existed since day 5 as a command nothing ran: no scheduler,
+# no job, and therefore no alarm. A reader of §20.4 would have concluded the
+# control was in place, which is worse than not having it.
+#
+# `schedule` only ever runs the copy of this file on the default branch, so a
+# pull request cannot change what the nightly run does, or where it sends the
+# production database URL, before somebody has merged it. That is why this
+# workflow needs no equivalent of `deploy.yml`'s ancestry check.
+on:
+  schedule:
+    # 03:17 UTC, daily. Off the hour deliberately: GitHub queues scheduled
+    # workflows at the top of every hour, and a delayed run reports a drift late.
+    - cron: "17 3 * * *"
+  # So a repaired discrepancy can be re-checked the same hour rather than
+  # tomorrow.
+  workflow_dispatch:
+
+# Read-only, and stated rather than inherited (P-5), like the other workflows in
+# this directory. Nothing here writes to the repository.
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    # Defence in depth, and the same reasoning as `deploy.yml`: the production
+    # database URL is scoped to this environment rather than to the whole
+    # repository, so it has one place to be revoked from.
+    environment: production
+    runs-on: ubuntu-latest
+    # Reads three aggregates and disconnects; observed in seconds. Ten is the
+    # figure the other jobs use, and the default of six hours is not a budget.
+    timeout-minutes: 10
+
+    steps:
+      # Pinned by commit SHA, not by tag (P-5). A tag is a mutable pointer
+      # somebody else controls, and this job holds the production database URL.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: yarn install --immutable
+
+      # Exits non-zero on a discrepancy, and nothing here catches it: a failed
+      # scheduled run is the notification — GitHub emails the owner on it. Wrap
+      # this command, or add `continue-on-error`, and §20.4's fatal log becomes
+      # a line in a green run that nobody opens.
+      #
+      # The pooled URL is fine: this reads three aggregates in one transaction
+      # and writes nothing, so it has none of the reasons `migrate deploy` has
+      # for the direct connection.
+      #
+      # JWT_SECRET is a throwaway generated for this job, not the production
+      # signing key. The reconciliation neither mints nor verifies a token, but
+      # `loadEnv` validates the whole schema at boot (NFR-1.9) and would refuse
+      # to start without one; handing a nightly job the real key would widen
+      # what it can leak in exchange for nothing.
+      - name: reconcile the ledger
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET: reconcile-job-only-never-signs-or-verifies-a-token
+        run: yarn workspace @wallet/api db:reconcile
