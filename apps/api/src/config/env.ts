@@ -160,6 +160,15 @@ const envSchema = z.object({
     .optional(),
 
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
+
+  /**
+   * Set by Render on every deploy — `health.ts` already reports it verbatim.
+   * Declared here, optional, only so the superRefine below can read it from
+   * the same `source` `loadEnv` was given rather than the process's own
+   * environment; that is what lets a test exercise the boot check below
+   * without mutating global state.
+   */
+  RENDER_GIT_COMMIT: z.string().optional(),
 })
 
 /**
@@ -176,6 +185,22 @@ const configuredEnvSchema = envSchema.superRefine((env, ctx) => {
       code: "custom",
       path: ["CORS_ORIGINS"],
       message: "CORS_ORIGINS must list at least one origin in production",
+    })
+  }
+
+  /**
+   * `RENDER_GIT_COMMIT` (F18) is set by the platform itself, never by a
+   * template, so its presence is proof this process is a real hosted
+   * deployment rather than a laptop. `NODE_ENV` defaults to "development",
+   * and that default is what leaves cookies.ts sending a cookie without
+   * `Secure` and this same superRefine skipping the CORS_ORIGINS check above
+   * — both silently, on a host reachable from the internet.
+   */
+  if (env.RENDER_GIT_COMMIT !== undefined && env.NODE_ENV !== "production") {
+    ctx.addIssue({
+      code: "custom",
+      path: ["NODE_ENV"],
+      message: "NODE_ENV must be production on a hosted deployment",
     })
   }
 })

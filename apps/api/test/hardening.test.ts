@@ -245,6 +245,32 @@ describe("the allowlist is validated, not merely described (NFR-1.8)", () => {
   })
 })
 
+describe("a hosted deployment must declare itself production (F18)", () => {
+  function withNodeEnv(nodeEnv: string | undefined, renderGitCommit: string | undefined) {
+    return () =>
+      loadEnv({
+        DATABASE_URL: "postgresql://unused",
+        JWT_SECRET: "x".repeat(32),
+        CORS_ORIGINS: "https://wallet.example.com",
+        ...(nodeEnv === undefined ? {} : { NODE_ENV: nodeEnv }),
+        ...(renderGitCommit === undefined ? {} : { RENDER_GIT_COMMIT: renderGitCommit }),
+      })
+  }
+
+  it("refuses to boot on Render's platform without NODE_ENV=production", () => {
+    // RENDER_GIT_COMMIT is set by the platform itself, not by a deploy
+    // template — a process running there that still thinks it is a laptop is
+    // the state that sends an insecure cookie (cookies.ts) and skips the
+    // CORS_ORIGINS check this same superRefine already enforces above.
+    expect(withNodeEnv("development", "abc")).toThrow(/NODE_ENV must be production/)
+  })
+
+  it("leaves a laptop, and a correctly configured deployment, alone", () => {
+    expect(withNodeEnv("development", undefined)).not.toThrow()
+    expect(withNodeEnv("production", "abc")).not.toThrow()
+  })
+})
+
 describe("rate limiting (§17.1 denial of service, §17.3)", () => {
   it("throttles registration far sooner than the global budget", async () => {
     // Registration being unthrottled is what made FR-4.9's per-user lookup cap

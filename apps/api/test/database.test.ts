@@ -52,6 +52,9 @@ describe.skipIf(!hasDatabase)("GET /health (runbook T-2.5)", () => {
     const { app: instance } = buildApp(prisma, {
       ...process.env,
       LOG_LEVEL: "fatal",
+      // A real hosted deploy always carries both (F18) — NODE_ENV is set
+      // here because RENDER_GIT_COMMIT alone now fails boot without it.
+      NODE_ENV: "production",
       RENDER_GIT_COMMIT: "0123456789abcdef0123456789abcdef01234567",
     })
 
