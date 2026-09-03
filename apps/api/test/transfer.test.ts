@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import type { PrismaClient } from "@prisma/client"
+import { DEMO_TOPUP_AMOUNT } from "@wallet/shared"
 import request from "supertest"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { seed } from "../prisma/seed.js"
@@ -122,6 +123,46 @@ describe.skipIf(!hasDatabase)("money transfer (FR-4)", () => {
       .set("authorization", `Bearer ${token}`)
       .set("idempotency-key", key)
       .send(body)
+  }
+
+  /** FR-10's demo top-up, which credits the caller's own account. */
+  function topUp(app: ReturnType<typeof buildApp>["app"], token: string) {
+    return request(app)
+      .post("/api/accounts/topup")
+      .set("authorization", `Bearer ${token}`)
+      .set("idempotency-key", randomUUID())
+      .send()
+  }
+
+  /**
+   * Blocks until `count` backends on this database are waiting for a lock.
+   *
+   * The two races below need one interleaving in particular, not whichever one
+   * the scheduler happens to produce. Firing both requests at once and hoping
+   * the second lands inside the first's window makes the test pass by luck —
+   * the wrong way round for a test whose job is to fail when the lock it
+   * defends is taken away. A lock wait is the observable that says "this
+   * statement is parked exactly where I wanted it", so the test waits for that
+   * rather than for a duration.
+   *
+   * Safe to read globally because `fileParallelism` is off: while this file
+   * runs, its own connections are the only ones on the database.
+   */
+  async function waitForLockWaiters(count: number): Promise<void> {
+    const deadline = Date.now() + 10_000
+
+    for (;;) {
+      const [row] = await prisma.$queryRaw<{ waiting: number }[]>`
+        SELECT count(*)::int AS waiting
+          FROM pg_stat_activity
+         WHERE datname = current_database() AND wait_event_type = 'Lock'
+      `
+      if ((row?.waiting ?? 0) >= count) return
+      if (Date.now() > deadline) {
+        throw new Error(`expected ${count} statements to be waiting on a lock, saw ${row?.waiting}`)
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
   }
 
   it("moves money and writes exactly two entries that cancel (FR-4.2, I-2)", async () => {
@@ -419,6 +460,175 @@ describe.skipIf(!hasDatabase)("money transfer (FR-4)", () => {
 
     expect(res.status).toBe(401)
   })
+
+  it("F8: a top-up does not overwrite a transfer that debited the same account", async () => {
+    /*
+     * The top-up runs Read Committed and writes absolute balances. Its
+     * advisory lock queues top-ups against each other and says nothing about a
+     * P2P transfer, which debits the very account a top-up credits — so a
+     * balance read before that debit committed, and written after it, silently
+     * puts the money back. The deferred P-21 trigger catches the lie at COMMIT
+     * and aborts, and the caller is told `INTERNAL`: a technical failure
+     * reported for money that was never at risk.
+     *
+     * The interleaving is pinned instead of raced. The transfer is parked on
+     * the recipient's row while holding its uncommitted debit of the holder,
+     * which is precisely the window the top-up must not read through.
+     */
+    const recipient = await newUser()
+    const ledger = new LedgerRepository(prisma)
+
+    for (let run = 1; run <= 50; run++) {
+      const holder = await newUser()
+      await fund(holder.accountId, 1_000_000n)
+
+      let release: () => void = () => {}
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const parked = prisma.$transaction(
+        async (tx) => {
+          /*
+           * FOR NO KEY UPDATE, not FOR UPDATE: `transfer.create` takes a
+           * FOR KEY SHARE lock on both parties through its foreign keys, and
+           * FOR UPDATE would park the transfer before it had written anything
+           * — the state this test needs it *past*.
+           */
+          await tx.$queryRaw`
+            SELECT "id" FROM "accounts" WHERE "id" = ${recipient.accountId}::uuid
+            FOR NO KEY UPDATE
+          `
+          await gate
+        },
+        { timeout: 30_000 },
+      )
+
+      // Supertest puts a request on the wire when something subscribes to it,
+      // so `.then` here is what starts these two rather than a formality.
+      const debit = send(holder.app, holder.token, {
+        phone: recipient.phone,
+        amount: MIN_TRANSFER.toString(),
+      }).then((res) => res)
+      await waitForLockWaiters(1)
+
+      // Parked on the holder's row: on the `FOR UPDATE` if it is there, on the
+      // balance write if it is not.
+      const credit = topUp(holder.app, holder.token).then((res) => res)
+      await waitForLockWaiters(2)
+
+      release()
+      await parked
+
+      const [sent, topped] = await Promise.all([debit, credit])
+      expect(sent.status, `run ${run}: the transfer`).toBe(201)
+      expect(topped.status, `run ${run}: the top-up`).toBe(201)
+      expect(sent.body.status).toBe("COMPLETED")
+      expect(topped.body.status).toBe("COMPLETED")
+
+      const account = await prisma.account.findUniqueOrThrow({ where: { id: holder.accountId } })
+      expect(account.balance, `run ${run}: the snapshot`).toBe(
+        1_000_000n - MIN_TRANSFER + DEMO_TOPUP_AMOUNT,
+      )
+      expect(account.balance, `run ${run}: the journal`).toBe(
+        await ledger.balanceOf(holder.accountId),
+      )
+    }
+  }, 180_000)
+
+  it("F8: a top-up retries the deferred trigger's abort instead of reporting INTERNAL", async () => {
+    /*
+     * The holder's row is locked; the treasury's is not — it is guarded by the
+     * advisory lock, which only binds writers that take it. A writer that does
+     * not (a repair script, a fixture) can still move the treasury under a
+     * top-up between its read and its write, and the deferred trigger aborts
+     * the commit for it. That abort arrives as SQLSTATE 23000 rather than as
+     * P2034, so the retry ladder has to recognise it or a contention that
+     * resolves itself on the next attempt reaches the user as `INTERNAL`.
+     */
+    const holder = await newUser()
+    const other = await newUser()
+
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    // An honest transfer out of the treasury that skips the advisory lock, held
+    // open at the point where it has written the treasury and not committed.
+    const parked = prisma.$transaction(
+      async (tx) => {
+        const treasury = await tx.account.findUniqueOrThrow({ where: { id: treasuryAccountId } })
+        const target = await tx.account.findUniqueOrThrow({ where: { id: other.accountId } })
+
+        const transfer = await tx.transfer.create({
+          data: {
+            fromAccountId: treasuryAccountId,
+            toAccountId: other.accountId,
+            initiatedBy: target.userId,
+            amount: MIN_TRANSFER,
+            type: "TOPUP",
+            channel: "WEB",
+            idempotencyKey: randomUUID(),
+            status: "PENDING",
+          },
+        })
+        await new LedgerRepository(tx).append([
+          {
+            accountId: treasuryAccountId,
+            transferId: transfer.id,
+            amount: -MIN_TRANSFER,
+            balanceAfter: treasury.balance - MIN_TRANSFER,
+          },
+          {
+            accountId: other.accountId,
+            transferId: transfer.id,
+            amount: MIN_TRANSFER,
+            balanceAfter: target.balance + MIN_TRANSFER,
+          },
+        ])
+        await tx.account.update({
+          where: { id: treasuryAccountId },
+          data: { balance: treasury.balance - MIN_TRANSFER },
+        })
+        await tx.account.update({
+          where: { id: other.accountId },
+          data: { balance: target.balance + MIN_TRANSFER },
+        })
+        await tx.transfer.update({
+          where: { id: transfer.id },
+          data: { status: "COMPLETED", completedAt: new Date() },
+        })
+
+        await gate
+      },
+      { timeout: 30_000 },
+    )
+
+    const credit = topUp(holder.app, holder.token).then((res) => res)
+    // Parked on the treasury's row, carrying the balance it read before the
+    // writer above committed.
+    await waitForLockWaiters(1)
+
+    release()
+    await parked
+
+    const topped = await credit
+    expect(topped.status).toBe(201)
+    expect(topped.body.status).toBe("COMPLETED")
+
+    // The retry re-read and re-wrote; it did not mint twice.
+    const minted = await prisma.transfer.count({
+      where: { toAccountId: holder.accountId, type: "TOPUP", status: "COMPLETED" },
+    })
+    expect(minted).toBe(1)
+
+    const ledger = new LedgerRepository(prisma)
+    const treasury = await prisma.account.findUniqueOrThrow({ where: { id: treasuryAccountId } })
+    expect(treasury.balance).toBe(await ledger.balanceOf(treasuryAccountId))
+
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: holder.accountId } })
+    expect(account.balance).toBe(DEMO_TOPUP_AMOUNT)
+  }, 30_000)
 })
 
 describe.skipIf(!hasDatabase)("anti-fraud limits (FR-6)", () => {
