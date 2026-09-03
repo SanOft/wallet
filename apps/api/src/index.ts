@@ -8,7 +8,7 @@ import { fetchCbuRates } from "./infra/cbu.js"
 import { warmDummyHash } from "./infra/crypto.js"
 import { createTokenService } from "./infra/jwt.js"
 import { createLogger } from "./infra/logger.js"
-import { checkPrivileges, createPrismaClient } from "./infra/prisma.js"
+import { checkDatabase, checkPrivileges, createPrismaClient } from "./infra/prisma.js"
 import { RatesRepository } from "./infra/RatesRepository.js"
 
 /**
@@ -56,6 +56,31 @@ async function main(): Promise<void> {
     log.info(
       { event: "db.least_privilege", ...privileges },
       "connected as a role that owns nothing",
+    )
+  }
+
+  /*
+   * Which migration this database is on, in the deploy log rather than on
+   * `/health` (§19.1).
+   *
+   * The name is what tells an operator the API and the schema are in step
+   * during a deploy window, and it used to be served to anyone who asked: it
+   * dates the schema a caller is probing, which is a free hint about which of
+   * its published gaps are still open. The audience is the person reading the
+   * deploy anyway, so this is where it goes — the same argument the privilege
+   * report above is written down for.
+   *
+   * Never fatal, for that same reason: a boot that failed because a diagnostic
+   * could not be read would be an outage caused by a report. The failure is
+   * `/health`'s to announce, not this line's.
+   */
+  const database = await checkDatabase(prisma)
+  if (database.ok) {
+    log.info({ event: "db.migration", migration: database.migration }, "database schema")
+  } else {
+    log.warn(
+      { event: "db.migration_unknown", cause: database.error },
+      "could not read the applied migration",
     )
   }
 

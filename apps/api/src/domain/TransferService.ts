@@ -86,6 +86,16 @@ const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000
 const SERIALIZATION_FAILURE = "P2034"
 /** Postgres 23505 — here it always means another request won a race. */
 const UNIQUE_VIOLATION = "P2002"
+/**
+ * Postgres 23000, raised by the deferred ledger triggers when they abort a
+ * COMMIT.
+ *
+ * Prisma has no code of its own for it. Measured against @prisma/adapter-pg
+ * 7.9.1: the failure arrives as a `DriverAdapterError` with neither `code` nor
+ * `meta` set, carrying the raw SQLSTATE on `cause` — so this is matched one
+ * level down rather than alongside `P2034`.
+ */
+const DEFERRED_INTEGRITY_VIOLATION = "23000"
 
 /**
  * The three ways this service finds an account, in one place (ADR-0011).
@@ -148,6 +158,10 @@ function hasPrismaCode(error: unknown, code: string): boolean {
 
 const isSerializationFailure = (error: unknown) => hasPrismaCode(error, SERIALIZATION_FAILURE)
 const isUniqueViolation = (error: unknown) => hasPrismaCode(error, UNIQUE_VIOLATION)
+const isDeferredIntegrityViolation = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  hasPrismaCode((error as { cause?: unknown }).cause, DEFERRED_INTEGRITY_VIOLATION)
 
 /**
  * Exponential backoff with jitter between serialization retries.
@@ -827,6 +841,30 @@ export class TransferService {
             if (!treasury) throw new Error("treasury account is missing; run the seed")
             if (!account) throw new RecipientNotFoundError()
 
+            /**
+             * The row lock the advisory lock cannot give.
+             *
+             * That lock queues top-ups against each other and says nothing to
+             * a P2P transfer, which debits the very account this one credits.
+             * Under Read Committed the balance read above is a snapshot of the
+             * moment it ran, and `#moveMoney` writes back an absolute number
+             * computed from it — so a debit committing in between is put back,
+             * the deferred P-21 trigger aborts the COMMIT, and the caller is
+             * told `INTERNAL` about a top-up nothing was wrong with.
+             *
+             * `FOR UPDATE` makes the read and the write one step: a concurrent
+             * debit either committed before it, and is in the number, or waits
+             * behind it. The treasury needs no equivalent, because every
+             * writer of that row takes the advisory lock first.
+             */
+            const [locked] = await tx.$queryRaw<AccountRef[]>`
+              SELECT "id", "balance" FROM "accounts" WHERE "id" = ${account.id} FOR UPDATE
+            `
+            // Unreachable through this transaction — the row was just read
+            // inside it and nothing deletes accounts — and still not assumed:
+            // the balance below is only trustworthy if it came from the lock.
+            if (!locked) throw new RecipientNotFoundError()
+
             // FR-10.3. Counts COMPLETED top-ups only: a refused one moved
             // nothing and must not spend an allowance.
             const recent = await tx.transfer.count({
@@ -845,7 +883,7 @@ export class TransferService {
 
             return this.#moveMoney(tx, {
               from: treasury,
-              to: account,
+              to: locked,
               input,
               type: "TOPUP",
               requestHash,
@@ -855,20 +893,23 @@ export class TransferService {
           /**
            * Read Committed, deliberately, and it is not a weakening.
            *
-           * The advisory lock above is mutual exclusion: only one top-up runs
-           * at a time, so there is no concurrent writer for an isolation level
-           * to protect against. Serializable here was strictly worse — its
-           * snapshot is taken when the transaction's first statement runs,
-           * which is *before* the lock is granted, so every queued caller woke
-           * with a stale snapshot and was aborted by SSI at COMMIT. The lock
-           * and the optimistic detector do not compose.
+           * The advisory lock above is mutual exclusion between top-ups, and
+           * the `FOR UPDATE` on the recipient covers the writer it does not
+           * cover — a P2P transfer debiting the same account. Between them the
+           * two rows this transaction writes are held, not merely watched.
+           * Serializable on top of that was strictly worse: its snapshot is
+           * taken when the transaction's first statement runs, which is
+           * *before* the lock is granted, so every queued caller woke with a
+           * stale snapshot and was aborted by SSI at COMMIT. The lock and the
+           * optimistic detector do not compose.
            *
            * What FR-4.3's Serializable requirement protects is two transfers
-           * racing on one user's balance. That race cannot arise on this path:
-           * the treasury is allowed to go negative (§9.4), so there is no
-           * balance constraint to lose, and the writer is serialized anyway.
-           * The ledger invariants are enforced by the deferred triggers, which
-           * are isolation-independent.
+           * racing on one user's balance. Here that race is settled
+           * pessimistically instead: the recipient's balance is read and
+           * written under a row lock, and the treasury is allowed to go
+           * negative (§9.4), so there is no balance constraint to lose. The
+           * ledger invariants are enforced by the deferred triggers, which are
+           * isolation-independent.
            */
           {
             isolationLevel: "ReadCommitted",
@@ -913,7 +954,17 @@ export class TransferService {
           await this.#recordFailure(input, requestHash, error)
           throw error
         }
-        if (!isSerializationFailure(error)) throw error
+        /*
+         * A deferred trigger's abort is retried on the same ladder as P2034,
+         * because on this path it means the same thing: another transaction
+         * moved a row this one had already read, and the next attempt reads it
+         * after them. The locks above make that rare rather than impossible —
+         * the treasury is only serialised against writers that take the
+         * advisory lock, and a repair script is not one. Bounded by the same
+         * three attempts, so a violation that is a real bug still surfaces
+         * rather than looping.
+         */
+        if (!isSerializationFailure(error) && !isDeferredIntegrityViolation(error)) throw error
         lastConflict = error
         if (attempt < SERIALIZABLE_RETRIES) await sleep(backoffMs(attempt))
       }
