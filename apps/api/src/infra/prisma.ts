@@ -84,12 +84,15 @@ interface MigrationRow {
 }
 
 /**
- * Answers two questions `/health` needs: is the database reachable, and which
- * migration is this database actually on (runbook T-2.5).
+ * Answers two questions: is the database reachable, and which migration is this
+ * database actually on (runbook T-2.5).
  *
- * The migration name matters during a deploy window, when the API and the
- * schema are briefly out of step (§19.1) — "up" is not a useful answer if the
- * process is talking to a database one migration behind.
+ * The query against `_prisma_migrations` is the liveness probe `/health` uses —
+ * it fails exactly when the database cannot answer — but only the reachability
+ * half is served. The migration name matters during a deploy window, when the
+ * API and the schema are briefly out of step (§19.1), and that is an operator's
+ * question, so `index.ts` writes it to the boot log instead of publishing it to
+ * an unauthenticated caller.
  */
 export async function checkDatabase(prisma: PrismaClient): Promise<DatabaseHealth> {
   try {
@@ -102,8 +105,8 @@ export async function checkDatabase(prisma: PrismaClient): Promise<DatabaseHealt
     `
     return { ok: true, migration: rows[0]?.migration_name ?? null }
   } catch (error) {
-    // The message is for the operator reading /health, so it says what failed
-    // without leaking the connection string.
+    // The message is for the operator reading the boot log, so it says what
+    // failed without leaking the connection string.
     return { ok: false, error: error instanceof Error ? error.name : "UnknownError" }
   }
 }
