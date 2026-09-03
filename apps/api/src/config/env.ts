@@ -170,15 +170,31 @@ const envSchema = z.object({
  * wrong: in production it either blocks the PWA outright or invites someone to
  * "unbreak" it with a wildcard. Development is allowed to omit it.
  */
-const configuredEnvSchema = envSchema.superRefine((env, ctx) => {
-  if (env.NODE_ENV === "production" && env.CORS_ORIGINS.length === 0) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["CORS_ORIGINS"],
-      message: "CORS_ORIGINS must list at least one origin in production",
-    })
-  }
-})
+const buildConfiguredEnvSchema = (source: NodeJS.ProcessEnv) =>
+  envSchema.superRefine((env, ctx) => {
+    if (env.NODE_ENV === "production" && env.CORS_ORIGINS.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["CORS_ORIGINS"],
+        message: "CORS_ORIGINS must list at least one origin in production",
+      })
+    }
+
+    /**
+     * Render sets `RENDER_GIT_COMMIT` on every deploy — `health.ts` already
+     * reads it for the version it reports, so its presence is what tells this
+     * process it is running on a real host rather than a laptop (F18).
+     * `NODE_ENV` defaulting to "development" there would silently drop the
+     * `Secure` cookie flag (cookies.ts) and the CORS_ORIGINS requirement above.
+     */
+    if (source.RENDER_GIT_COMMIT && env.NODE_ENV !== "production") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["NODE_ENV"],
+        message: "NODE_ENV must be production on a hosted deployment",
+      })
+    }
+  })
 
 export type Env = z.infer<typeof envSchema>
 
@@ -187,7 +203,7 @@ export type Env = z.infer<typeof envSchema>
  * reader of this message is someone whose deploy just failed.
  */
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
-  const parsed = configuredEnvSchema.safeParse(source)
+  const parsed = buildConfiguredEnvSchema(source).safeParse(source)
   if (parsed.success) return parsed.data
 
   const problems = parsed.error.issues

@@ -56,6 +56,10 @@ describe.skipIf(!hasDatabase)("GET /health (runbook T-2.5)", () => {
     const { app: instance } = buildApp(prisma, {
       ...process.env,
       LOG_LEVEL: "fatal",
+      // A real Render deploy always carries both — env.ts now refuses to boot
+      // with one and not the other (F18).
+      NODE_ENV: "production",
+      CORS_ORIGINS: "https://wallet.example.com",
       RENDER_GIT_COMMIT: "0123456789abcdef0123456789abcdef01234567",
     })
 
