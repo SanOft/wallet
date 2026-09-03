@@ -37,7 +37,7 @@ const hasDatabase = Boolean(process.env.DATABASE_URL)
  * number*, and the header above records what happened when one of them named
  * a real account. `uniquePhone` returns `+9989…`, which looks like a customer.
  */
-function throwawayUsers(): readonly DemoUser[] {
+function throwawayUsers(): readonly [DemoUser, DemoUser] {
   const suffix = Math.floor(1_000_000 + Math.random() * 8_999_999)
   return [
     { phone: `+99833${suffix}`, firstName: "Seed", lastName: "Fixture" },
@@ -131,5 +131,32 @@ describe.skipIf(!hasDatabase)("the demo seed", () => {
     } finally {
       process.env.NODE_ENV = previous
     }
+  })
+
+  it("refuses a Neon-shaped DATABASE_URL before writing anything", async () => {
+    /*
+     * `prisma` here is still the local test database — injected clients bypass
+     * DATABASE_URL entirely — so if the guard failed to fire this write would
+     * actually succeed. A fresh phone number makes that observable: nobody
+     * else in this file ever creates it, so its absence afterwards is proof
+     * the refusal happened before `seed()` touched anything, not evidence of
+     * a network failure against a host nothing here can reach.
+     */
+    const [remoteUser] = throwawayUsers()
+    const previousUrl = process.env.DATABASE_URL
+    const previousAllow = process.env.SEED_DEMO_ALLOW_REMOTE
+    process.env.DATABASE_URL =
+      "postgresql://user:pass@ep-cool-block-12345.us-east-2.aws.neon.tech/neondb"
+    delete process.env.SEED_DEMO_ALLOW_REMOTE
+    try {
+      await expect(seedDemoUsers(prisma, [remoteUser])).rejects.toThrow(/SEED_DEMO_ALLOW_REMOTE/)
+    } finally {
+      process.env.DATABASE_URL = previousUrl
+      if (previousAllow === undefined) delete process.env.SEED_DEMO_ALLOW_REMOTE
+      else process.env.SEED_DEMO_ALLOW_REMOTE = previousAllow
+    }
+
+    const written = await prisma.user.findUnique({ where: { phone: remoteUser.phone } })
+    expect(written, "seed-demo wrote before the remote-database guard fired").toBeNull()
   })
 })
