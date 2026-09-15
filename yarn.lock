@@ -1174,18 +1174,18 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@biomejs/biome@npm:^2.5.11":
-  version: 2.5.11
-  resolution: "@biomejs/biome@npm:2.5.11"
+"@biomejs/biome@npm:^2.5.12":
+  version: 2.5.12
+  resolution: "@biomejs/biome@npm:2.5.12"
   dependencies:
-    "@biomejs/cli-darwin-arm64": "npm:2.5.11"
-    "@biomejs/cli-darwin-x64": "npm:2.5.11"
-    "@biomejs/cli-linux-arm64": "npm:2.5.11"
-    "@biomejs/cli-linux-arm64-musl": "npm:2.5.11"
-    "@biomejs/cli-linux-x64": "npm:2.5.11"
-    "@biomejs/cli-linux-x64-musl": "npm:2.5.11"
-    "@biomejs/cli-win32-arm64": "npm:2.5.11"
-    "@biomejs/cli-win32-x64": "npm:2.5.11"
+    "@biomejs/cli-darwin-arm64": "npm:2.5.12"
+    "@biomejs/cli-darwin-x64": "npm:2.5.12"
+    "@biomejs/cli-linux-arm64": "npm:2.5.12"
+    "@biomejs/cli-linux-arm64-musl": "npm:2.5.12"
+    "@biomejs/cli-linux-x64": "npm:2.5.12"
+    "@biomejs/cli-linux-x64-musl": "npm:2.5.12"
+    "@biomejs/cli-win32-arm64": "npm:2.5.12"
+    "@biomejs/cli-win32-x64": "npm:2.5.12"
   dependenciesMeta:
     "@biomejs/cli-darwin-arm64":
       optional: true
@@ -1205,62 +1205,62 @@ __metadata:
       optional: true
   bin:
     biome: bin/biome
-  checksum: 10c0/6d76d2b2e2fcf01e40e0e65dd249b6a6e003b7db716fb3bcb17789bef644fa7353be62c595ae7a25831d80515b5b311b22f4660f82446f55843a0fdd3458f32a
+  checksum: 10c0/2433c73b3a3e2a1405ebe04f8fa54185fa33097f199c2527ee259525c223998d26d6bcf0ee6bfca4164c6dda5e7d975cbd38a42f57ab38dc1c1f91f9fea2b957
   languageName: node
   linkType: hard
 
-"@biomejs/cli-darwin-arm64@npm:2.5.11":
-  version: 2.5.11
-  resolution: "@biomejs/cli-darwin-arm64@npm:2.5.11"
+"@biomejs/cli-darwin-arm64@npm:2.5.12":
+  version: 2.5.12
+  resolution: "@biomejs/cli-darwin-arm64@npm:2.5.12"
   conditions: os=darwin & cpu=arm64
   languageName: node
   linkType: hard
 
-"@biomejs/cli-darwin-x64@npm:2.5.11":
-  version: 2.5.11
-  resolution: "@biomejs/cli-darwin-x64@npm:2.5.11"
+"@biomejs/cli-darwin-x64@npm:2.5.12":
+  version: 2.5.12
+  resolution: "@biomejs/cli-darwin-x64@npm:2.5.12"
   conditions: os=darwin & cpu=x64
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-arm64-musl@npm:2.5.11":
-  version: 2.5.11
-  resolution: "@biomejs/cli-linux-arm64-musl@npm:2.5.11"
+"@biomejs/cli-linux-arm64-musl@npm:2.5.12":
+  version: 2.5.12
+  resolution: "@biomejs/cli-linux-arm64-musl@npm:2.5.12"
   conditions: os=linux & cpu=arm64 & libc=musl
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-arm64@npm:2.5.11":
-  version: 2.5.11
-  resolution: "@biomejs/cli-linux-arm64@npm:2.5.11"
+"@biomejs/cli-linux-arm64@npm:2.5.12":
+  version: 2.5.12
+  resolution: "@biomejs/cli-linux-arm64@npm:2.5.12"
   conditions: os=linux & cpu=arm64 & libc=glibc
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-x64-musl@npm:2.5.11":
-  version: 2.5.11
-  resolution: "@biomejs/cli-linux-x64-musl@npm:2.5.11"
+"@biomejs/cli-linux-x64-musl@npm:2.5.12":
+  version: 2.5.12
+  resolution: "@biomejs/cli-linux-x64-musl@npm:2.5.12"
   conditions: os=linux & cpu=x64 & libc=musl
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-x64@npm:2.5.11":
-  version: 2.5.11
-  resolution: "@biomejs/cli-linux-x64@npm:2.5.11"
+"@biomejs/cli-linux-x64@npm:2.5.12":
+  version: 2.5.12
+  resolution: "@biomejs/cli-linux-x64@npm:2.5.12"
   conditions: os=linux & cpu=x64 & libc=glibc
   languageName: node
   linkType: hard
 
-"@biomejs/cli-win32-arm64@npm:2.5.11":
-  version: 2.5.11
-  resolution: "@biomejs/cli-win32-arm64@npm:2.5.11"
+"@biomejs/cli-win32-arm64@npm:2.5.12":
+  version: 2.5.12
+  resolution: "@biomejs/cli-win32-arm64@npm:2.5.12"
   conditions: os=win32 & cpu=arm64
   languageName: node
   linkType: hard
 
-"@biomejs/cli-win32-x64@npm:2.5.11":
-  version: 2.5.11
-  resolution: "@biomejs/cli-win32-x64@npm:2.5.11"
+"@biomejs/cli-win32-x64@npm:2.5.12":
+  version: 2.5.12
+  resolution: "@biomejs/cli-win32-x64@npm:2.5.12"
   conditions: os=win32 & cpu=x64
   languageName: node
   linkType: hard
@@ -3147,12 +3147,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:^22.20.1":
-  version: 22.20.1
-  resolution: "@types/node@npm:22.20.1"
+"@types/node@npm:^22.20.2":
+  version: 22.20.2
+  resolution: "@types/node@npm:22.20.2"
   dependencies:
     undici-types: "npm:~6.21.0"
-  checksum: 10c0/f2ba54d3d1fb92e1c57c78d32c3a17655b1e87363b707136f55c422b4838d4054901ce5d27f75bb0e5ecb7ebfee3804e0987822d22b473473008091857a09353
+  checksum: 10c0/1940dbec0c65a454c3651a282970fbfc998e0f0a5492bf5e067d8d9185f0c47cacc0d028153c481c4e6ecd19381ab03bf3f2efadb0cfacd702e74b6d5e4b212e
   languageName: node
   linkType: hard
 
@@ -3181,21 +3181,30 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/react-dom@npm:^19.2.5":
-  version: 19.2.5
-  resolution: "@types/react-dom@npm:19.2.5"
+"@types/react-dom@npm:^19.3.0":
+  version: 19.3.0
+  resolution: "@types/react-dom@npm:19.3.0"
   peerDependencies:
-    "@types/react": ^19.2.0
-  checksum: 10c0/7a59467b043debf392d109daa1ba672e791f20ce6f24ae81fb54715f890f8119d24967e61e3644b6307428603b695b7d59e69eaf531bd1963a74a6cb462f5f49
+    "@types/react": ^19.3.0
+  checksum: 10c0/ce0066d28b62bc6afdd17ca84756b8fbe0f6ffc0c8b1e60739abc30e81510da2edbc1007e6ab3d974d30f5a8c25bb0f7de8d7ce09736c909fe84c0f9aed0b946
   languageName: node
   linkType: hard
 
-"@types/react@npm:*, @types/react@npm:^19.2.18":
+"@types/react@npm:*":
   version: 19.2.18
   resolution: "@types/react@npm:19.2.18"
   dependencies:
     csstype: "npm:^3.2.2"
   checksum: 10c0/d04216172b4b4362b310017c210dfbe019fb4f4e7dffd0313e70b3acb3051d5c3e76e7e84e3cf4c6a3c824993ffadfe3949e589a6398a09d4200e7670e2962de
+  languageName: node
+  linkType: hard
+
+"@types/react@npm:^19.3.0":
+  version: 19.3.0
+  resolution: "@types/react@npm:19.3.0"
+  dependencies:
+    csstype: "npm:^3.2.2"
+  checksum: 10c0/fbcabf303f935ca9f36ed2dcf81751cf84744098c5a683c8a62a0fa7edd31714b48d5c46b12fd0014f7f2dfe4d9ec6de428a850748eec719a70294e51029551b
   languageName: node
   linkType: hard
 
@@ -3662,7 +3671,7 @@ __metadata:
     "@prisma/client": "npm:~7.10.0"
     "@types/cors": "npm:^2.8.19"
     "@types/express": "npm:^5.0.6"
-    "@types/node": "npm:^22.20.1"
+    "@types/node": "npm:^22.20.2"
     "@types/pg": "npm:^8.23.1"
     "@types/supertest": "npm:^7.2.1"
     "@vitest/coverage-v8": "npm:4.1.11"
@@ -3672,7 +3681,7 @@ __metadata:
     express: "npm:^5.2.1"
     express-rate-limit: "npm:^8.7.0"
     helmet: "npm:^8.3.0"
-    jose: "npm:^6.2.10"
+    jose: "npm:^6.2.12"
     pg: "npm:^8.23.0"
     pino: "npm:^10.3.1"
     pino-http: "npm:^11.0.0"
@@ -3681,7 +3690,7 @@ __metadata:
     tsx: "npm:^4.23.13"
     typescript: "npm:^7.0.2"
     vitest: "npm:^4.1.11"
-    zod: "npm:^4.5.4"
+    zod: "npm:^4.6.0"
   languageName: unknown
   linkType: soft
 
@@ -3692,7 +3701,7 @@ __metadata:
     "@vitest/coverage-v8": "npm:4.1.11"
     typescript: "npm:^7.0.2"
     vitest: "npm:^4.1.11"
-    zod: "npm:^4.5.4"
+    zod: "npm:^4.6.0"
   languageName: unknown
   linkType: soft
 
@@ -3706,8 +3715,8 @@ __metadata:
     "@testing-library/jest-dom": "npm:^7.0.1"
     "@testing-library/react": "npm:^16.3.3"
     "@testing-library/user-event": "npm:^14.6.7"
-    "@types/react": "npm:^19.2.18"
-    "@types/react-dom": "npm:^19.2.5"
+    "@types/react": "npm:^19.3.0"
+    "@types/react-dom": "npm:^19.3.0"
     "@vitejs/plugin-react": "npm:^6.1.1"
     "@vitest/coverage-v8": "npm:4.1.11"
     "@wallet/shared": "workspace:^"
@@ -3717,9 +3726,9 @@ __metadata:
     idb: "npm:^8.0.3"
     jsdom: "npm:^30.0.1"
     lighthouse: "npm:13.4.1"
-    lucide-react: "npm:^1.39.0"
-    react: "npm:^19.2.8"
-    react-dom: "npm:^19.2.8"
+    lucide-react: "npm:^1.43.0"
+    react: "npm:^19.3.0"
+    react-dom: "npm:^19.3.0"
     react-redux: "npm:^9.3.0"
     react-router: "npm:^8.3.1"
     tailwindcss: "npm:^4.3.3"
@@ -6194,10 +6203,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"jose@npm:^6.2.10":
-  version: 6.2.10
-  resolution: "jose@npm:6.2.10"
-  checksum: 10c0/799fd8d3d92fe748ebe1f57dbd3dfd917d2e61d9fb39912c72cc674ae61d69414b7cc0ce773df8a0160e849926fc31853aec9caab88c481563d5a8ab6558e107
+"jose@npm:^6.2.12":
+  version: 6.2.12
+  resolution: "jose@npm:6.2.12"
+  checksum: 10c0/e8582b946fabcae228819982dda4849908c353e9cb098f02f773635aa0d2f4917f17484c7441b8d526e564013b4cf96951455c94f81d0a39ee765bad44ce293d
   languageName: node
   linkType: hard
 
@@ -6675,12 +6684,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"lucide-react@npm:^1.39.0":
-  version: 1.39.0
-  resolution: "lucide-react@npm:1.39.0"
+"lucide-react@npm:^1.43.0":
+  version: 1.43.0
+  resolution: "lucide-react@npm:1.43.0"
   peerDependencies:
     react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
-  checksum: 10c0/2e3cb76fd707a96dadeafedc0806816620fa90450c96c9ad8f71e9253d655341a6770f4fe31b0da1e82a5dbdfcb3ac5240eba130c25d04898d8380a9365896a0
+  checksum: 10c0/58619588b6e0ce44d0188d7b0021b3e85e2fd473fbc1b1ef9b6de6f9519eb46b359354747137da26ce215f5efa9435f8b9d8e20c29d4d24471f17de076cb5f79
   languageName: node
   linkType: hard
 
@@ -7509,14 +7518,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-dom@npm:^19.2.8":
-  version: 19.2.8
-  resolution: "react-dom@npm:19.2.8"
+"react-dom@npm:^19.3.0":
+  version: 19.3.0
+  resolution: "react-dom@npm:19.3.0"
   dependencies:
-    scheduler: "npm:^0.27.0"
+    scheduler: "npm:^0.28.0"
   peerDependencies:
-    react: ^19.2.8
-  checksum: 10c0/41ba2247b76f687fcfe5bbc99f514d6b851d8c8041c2f5ded36ed05bd7fdc5208cacbac9de51e3e6633e77f96f44cec9f0d4a5a55184dba4e00738f224439134
+    react: ^19.3.0
+  checksum: 10c0/c513044b724dd6bfe9500a9682d60973e7f8a48cffba00b6b16d3e910e27dcc459bf71bf0a5c33d7d62a3843ca30de1bd1e2098058aa4ed71f618a24b6061da5
   languageName: node
   linkType: hard
 
@@ -7561,10 +7570,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react@npm:^19.2.8":
-  version: 19.2.8
-  resolution: "react@npm:19.2.8"
-  checksum: 10c0/5f86bdb56426652fd6d989d30a6f2e603c057272c47c9ca3a3fbe190a3a39ee9ccce937d63cfc039717abed1b8891d6a499134bc35311acc07eafdacd86537cd
+"react@npm:^19.3.0":
+  version: 19.3.0
+  resolution: "react@npm:19.3.0"
+  checksum: 10c0/dd3099c3c43a7122bc01223bb26b0f8d5ba13cca569af6fb94a005fb54fa73223c9cb203bb226d40cfd49a82cbeef2e36ce84062a3a6d5b9fe8f4437694c7b52
   languageName: node
   linkType: hard
 
@@ -8019,10 +8028,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"scheduler@npm:^0.27.0":
-  version: 0.27.0
-  resolution: "scheduler@npm:0.27.0"
-  checksum: 10c0/4f03048cb05a3c8fddc45813052251eca00688f413a3cee236d984a161da28db28ba71bd11e7a3dd02f7af84ab28d39fb311431d3b3772fed557945beb00c452
+"scheduler@npm:^0.28.0":
+  version: 0.28.0
+  resolution: "scheduler@npm:0.28.0"
+  checksum: 10c0/783c8e5ce89d41273a02ed6dc0e3d24bd60e05c9e8f7e3adfc6c82e7c69935500d90e343f1ee26d592fc7504e8a2532573c6368def3e93bfe812391fa53efaf4
   languageName: node
   linkType: hard
 
@@ -9228,7 +9237,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "wallet@workspace:."
   dependencies:
-    "@biomejs/biome": "npm:^2.5.11"
+    "@biomejs/biome": "npm:^2.5.12"
     typescript: "npm:^7.0.2"
   languageName: unknown
   linkType: soft
@@ -9743,9 +9752,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"zod@npm:^4.5.4":
-  version: 4.5.4
-  resolution: "zod@npm:4.5.4"
-  checksum: 10c0/511a2a4d1a6f875dfdd70a1586989a8b14ef126776cd6218a2c760b9f65f14ef389ec20d92ee1aa4fcb4566d4ff3fa012956044f9dc503510d82e4c756a8ba92
+"zod@npm:^4.6.0":
+  version: 4.6.0
+  resolution: "zod@npm:4.6.0"
+  checksum: 10c0/845b7f375010b57153e4602bf6fd3bb18cf86818fbcf738f7852c8a2dddebc6221f645ec01856ea9cb5b9904bca7a138a57c5c5ff9757217dcaab022dc837df2
   languageName: node
   linkType: hard
