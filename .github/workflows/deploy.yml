@@ -75,7 +75,7 @@ jobs:
           # that it is proven to be one of main's ancestors.
           git checkout --detach "$WANT"
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
       - run: corepack enable
@@ -178,7 +178,7 @@ jobs:
           echo "event=${{ github.event.workflow_run.event }} head=${{ github.event.workflow_run.head_branch }} repo=${{ github.event.workflow_run.head_repository.full_name }}"
           git merge-base --is-ancestor "$WANT" origin/main || { echo "::error::$WANT is not on main"; exit 1; }
           git checkout --detach "$WANT"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 22
       - run: corepack enable
