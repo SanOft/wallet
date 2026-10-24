@@ -18,7 +18,7 @@
     "verify": "yarn lint && yarn build && yarn typecheck && yarn test"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.12",
+    "@biomejs/biome": "^2.6.2",
     "typescript": "^7.0.2"
   },
   "resolutions": {
